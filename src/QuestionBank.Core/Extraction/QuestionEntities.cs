@@ -11,7 +11,10 @@ public enum QuestionReviewStatus
     NeedsReview,
 
     Approved,
-    Flagged
+    Flagged,
+
+    /// <summary>سؤال روجع ثم تغيّر ملفه. يبقى للتتبع مع مراجعته، ولا يُصدَّر.</summary>
+    Superseded
 }
 
 /// <summary>
@@ -43,6 +46,12 @@ public sealed class Question
     public required string ReaderVersion { get; set; }
     public DateTime ExtractedAtUtc { get; set; }
     public QuestionReviewStatus ReviewStatus { get; set; }
+
+    /// <summary>طبقة التصحيح: الإجابة التي عيّنها المراجع. null = لا تصحيح، والفعّالة هي الأصلية.</summary>
+    public int? CorrectedIndex { get; set; }
+
+    public string? ReviewedBy { get; set; }
+    public DateTime? ReviewedAtUtc { get; set; }
 }
 
 /// <summary>ملف رفعه مستخدم من المتصفح. يُحفظ في مجلد النتائج باسم بصمته، وليس في المصدر.</summary>

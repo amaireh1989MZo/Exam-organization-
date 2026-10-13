@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http.Features;
 using QuestionBank.Core.Data;
 using QuestionBank.Core.Extraction;
+using QuestionBank.Core.Review;
 using QuestionBank.Core.Inventory;
 using QuestionBank.Web.Security;
 using QuestionBank.Web.Services;
@@ -33,6 +34,7 @@ builder.Services.AddSingleton(ReaderRegistry.Default());
 builder.Services.AddScoped<ExtractionService>();
 builder.Services.AddScoped<UploadService>();
 builder.Services.AddScoped<QueueProcessor>();
+builder.Services.AddScoped<ReviewService>();
 builder.Services.AddSingleton<ExtractionSignal>();
 builder.Services.AddSingleton<InventoryCoordinator>();
 if (builder.Configuration.GetValue("QuestionBank:EnableWorker", true))
@@ -224,7 +226,44 @@ app.MapGet("/api/questions", async (long? uploadId, long? sourceFileId, Question
     }));
 }).RequireAuthorization(AppPolicies.Review);
 
+var review = app.MapGroup("/api/review").RequireAuthorization(AppPolicies.Review);
+
+review.MapGet("/", async (string? status, int? skip, int? take, ReviewService service, CancellationToken ct) =>
+{
+    QuestionReviewStatus? filter = null;
+    if (!string.IsNullOrEmpty(status))
+    {
+        if (!Enum.TryParse<QuestionReviewStatus>(status, out var parsed))
+            return Results.BadRequest(new { message = "حالة غير معروفة." });
+        filter = parsed;
+    }
+    return Results.Ok(await service.ListAsync(filter, skip ?? 0, take ?? 100, ct));
+});
+
+review.MapGet("/{id:long}/history", async (long id, ReviewService service, CancellationToken ct) =>
+    Results.Ok(await service.HistoryAsync(id, ct)));
+
+review.MapPost("/{id:long}/answer", async (long id, AnswerRequest request, HttpContext ctx, ReviewService service, CancellationToken ct) =>
+    ReviewResult(await service.SetAnswerAsync(id, request.Index, UserName(ctx), ct)));
+review.MapPost("/{id:long}/approve", async (long id, HttpContext ctx, ReviewService service, CancellationToken ct) =>
+    ReviewResult(await service.ApproveAsync(id, UserName(ctx), ct)));
+review.MapPost("/{id:long}/flag", async (long id, HttpContext ctx, ReviewService service, CancellationToken ct) =>
+    ReviewResult(await service.FlagAsync(id, UserName(ctx), ct)));
+review.MapPost("/{id:long}/reopen", async (long id, HttpContext ctx, ReviewService service, CancellationToken ct) =>
+    ReviewResult(await service.ReopenAsync(id, UserName(ctx), ct)));
+
 app.Run();
+
+static string UserName(HttpContext ctx) => ctx.User.Identity?.Name ?? "unknown";
+
+static IResult ReviewResult(ReviewOutcome outcome) => outcome switch
+{
+    ReviewOutcome.Ok => Results.NoContent(),
+    ReviewOutcome.NotFound => Results.NotFound(),
+    ReviewOutcome.InvalidOption => Results.BadRequest(new { message = "رقم الخيار غير صحيح." }),
+    ReviewOutcome.NoAnswer => Results.BadRequest(new { message = "حدّد الإجابة الصحيحة قبل الاعتماد." }),
+    _ => Results.Conflict(new { message = "أعد فتح السؤال المعتمد قبل تعديل إجابته." })
+};
 
 static async Task InitializeDatabaseAsync(IServiceProvider services, string connectionString)
 {
@@ -243,6 +282,8 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
 public partial class Program;
 
 public sealed record EnqueueRequest(string? Path);
+
+public sealed record AnswerRequest(int? Index);
 
 /// <summary>الترويسة المطلوبة في كل طلب يغيّر شيئًا (حماية CSRF).</summary>
 public static class ClientHeader

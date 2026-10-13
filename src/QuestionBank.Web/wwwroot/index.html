@@ -13,7 +13,7 @@
     <button class="nav" data-view="dash" type="button">لوحة الحالة</button>
     <button class="nav" data-view="folders" type="button">مجلد الشبكة <span class="n" id="n-queue">0</span></button>
     <button class="nav" data-view="drop" type="button">إسقاط الملفات</button>
-    <span class="nav soon" aria-disabled="true">المراجعة <small>قريبًا</small></span>
+    <button class="nav" data-view="review" type="button">المراجعة <span class="n" id="n-review">0</span></button>
     <span class="nav soon" aria-disabled="true">التصنيف <small>قريبًا</small></span>
     <span class="nav soon" aria-disabled="true">سلة التصدير <small>قريبًا</small></span>
     <div class="who"><b id="who-name">…</b><span id="who-roles"></span></div>
@@ -79,6 +79,22 @@
           <h2 id="qpanel-title">الأسئلة المستخرجة</h2>
           <div id="qpanel-body" class="muted">اختر ملفًا لعرض أسئلته.</div>
         </div>
+      </div>
+    </section>
+
+    <!-- المراجعة -->
+    <section data-screen="review" hidden>
+      <div class="head">
+        <div><h1>المراجعة</h1><p class="sub">اضغط على خيار لتعيينه إجابة صحيحة. التصحيح يُحفظ منفصلًا، والإجابة الأصلية في الملف لا تتغير. كل عملية تُسجَّل باسمك.</p></div>
+        <div class="muted keys"><kbd>J</kbd> / <kbd>K</kbd> تنقل · <kbd>A</kbd> اعتماد · <kbd>F</kbd> تعليم للجنة</div>
+      </div>
+      <div class="split">
+        <div class="panel">
+          <div class="actions filters" id="rv-filters"></div>
+          <div class="qlist" id="rv-list" role="listbox" aria-label="الأسئلة"></div>
+          <div class="actions" style="margin-top:8px"><button class="btn sm" id="rv-more" type="button" hidden>عرض المزيد</button></div>
+        </div>
+        <div class="panel" id="rv-detail"><div class="muted">لا توجد أسئلة في هذه القائمة.</div></div>
       </div>
     </section>
 

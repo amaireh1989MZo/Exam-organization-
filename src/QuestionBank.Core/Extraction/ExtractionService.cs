@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuestionBank.Core.Data;
+using QuestionBank.Core.Review;
 
 namespace QuestionBank.Core.Extraction;
 
@@ -45,17 +46,43 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
         var hash = Convert.ToHexString(SHA256.HashData(content));
         var now = time.GetUtcNow().UtcDateTime;
 
-        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
-        await db.Questions
-            .Where(q => (sourceFileId != null && q.SourceFileId == sourceFileId) || (uploadId != null && q.UploadId == uploadId))
-            .ExecuteDeleteAsync(cancellationToken);
+        var bySource = db.Questions.Where(q =>
+            (sourceFileId != null && q.SourceFileId == sourceFileId) || (uploadId != null && q.UploadId == uploadId));
+        var existingHashes = await bySource.Where(q => q.ReviewStatus != QuestionReviewStatus.Superseded)
+            .Select(q => q.ContentHash).Distinct().ToListAsync(cancellationToken);
 
+        // المحتوى نفسه استُخرج سابقًا: لا شيء يتغير، فتبقى المراجعة والتصحيحات كما هي.
+        if (existingHashes.Count == 1 && existingHashes[0] == hash)
+            return new ExtractionOutcome(true, await bySource.CountAsync(q => q.ContentHash == hash, cancellationToken), result.Warnings.Count, null);
+
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        // المحتوى تغيّر: غير المراجَع يُحذف، والمراجَع يبقى «مُستبدَلًا» مع سجله، فلا يضيع عمل المراجعين.
+        var superseded = await bySource
+            .Where(q => q.ReviewedBy != null && q.ReviewStatus != QuestionReviewStatus.Superseded)
+            .ToListAsync(cancellationToken);
+        foreach (var old in superseded)
+        {
+            db.AuditLog.Add(new AuditEntry
+            {
+                AtUtc = now, User = "system", Action = "Supersede", EntityType = nameof(Question),
+                EntityId = old.Id, OldValue = old.ReviewStatus.ToString(), NewValue = nameof(QuestionReviewStatus.Superseded)
+            });
+            old.ReviewStatus = QuestionReviewStatus.Superseded;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        foreach (var old in superseded)
+            db.Entry(old).State = EntityState.Detached;
+        await bySource.Where(q => q.ReviewedBy == null).ExecuteDeleteAsync(cancellationToken);
+
+        // ملف عاد إلى محتوى قديم سبق أن استُبدلت أسئلته: نميّز المعرّف حتى لا يصطدم بالسؤال المستبدَل المحفوظ.
+        var takenKeys = (await bySource.Select(q => q.StableKey).ToListAsync(cancellationToken)).ToHashSet(StringComparer.Ordinal);
+        var source = sourceFileId is not null ? $"f{sourceFileId}" : $"u{uploadId}";
         var added = new List<Question>(result.Questions.Count);
         foreach (var q in result.Questions)
         {
             var entity = new Question
             {
-                StableKey = StableKey(sourceFileId is not null ? $"f{sourceFileId}" : $"u{uploadId}", hash, q.Order),
+                StableKey = UniqueKey(source, hash, q.Order, takenKeys),
                 SourceFileId = sourceFileId,
                 UploadId = uploadId,
                 ContentHash = hash,
@@ -92,6 +119,15 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
     /// ويتغير إذا تغيّر الملف. نسختان متطابقتان في مجلدين تبقيان سؤالين لكل منهما مصدره،
     /// والتكرار بينهما يكشفه فحص الجودة (ContentHash متساوٍ) ولا يُحذف تلقائيًا.
     /// </summary>
+    private static string UniqueKey(string source, string hash, int order, HashSet<string> taken)
+    {
+        var key = StableKey(source, hash, order);
+        for (var n = 1; taken.Contains(key); n++)
+            key = StableKey($"{source}#{n}", hash, order);
+        taken.Add(key);
+        return key;
+    }
+
     public static string StableKey(string source, string contentHash, int order) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{source}:{contentHash}:{order}")))[..32];
 }

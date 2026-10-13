@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using QuestionBank.Core.Extraction;
 using QuestionBank.Core.Inventory;
+using QuestionBank.Core.Review;
 
 namespace QuestionBank.Core.Data;
 
@@ -12,6 +13,7 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<ProcessingQueueItem> ProcessingQueue => Set<ProcessingQueueItem>();
     public DbSet<Question> Questions => Set<Question>();
     public DbSet<Upload> Uploads => Set<Upload>();
+    public DbSet<AuditEntry> AuditLog => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -64,6 +66,7 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.Location).HasMaxLength(200);
             e.Property(x => x.ReaderName).HasMaxLength(32);
             e.Property(x => x.ReaderVersion).HasMaxLength(16);
+            e.Property(x => x.ReviewedBy).HasMaxLength(256);
             e.HasIndex(x => x.StableKey).IsUnique();
             e.HasIndex(x => x.SourceFileId);
             e.HasIndex(x => x.UploadId);
@@ -86,6 +89,18 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
             e.Property(x => x.LastErrorCode).HasMaxLength(100);
             e.HasIndex(x => x.Sha256).IsUnique();
+        });
+
+        modelBuilder.Entity<AuditEntry>(e =>
+        {
+            e.ToTable("AuditLog");
+            e.Property(x => x.User).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Action).HasMaxLength(64).IsRequired();
+            e.Property(x => x.EntityType).HasMaxLength(64).IsRequired();
+            e.Property(x => x.OldValue).HasMaxLength(200);
+            e.Property(x => x.NewValue).HasMaxLength(200);
+            e.HasIndex(x => new { x.EntityType, x.EntityId });
+            e.HasIndex(x => x.AtUtc);
         });
     }
 }

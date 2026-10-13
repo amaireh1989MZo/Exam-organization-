@@ -51,6 +51,7 @@ function show(view) {
   if (view === 'dash') refreshStatus();
   if (view === 'folders') { loadRoot(); loadQueue(); }
   if (view === 'drop') loadUploads();
+  if (view === 'review') loadReview(true);
 }
 $$('.nav[data-view]').forEach(n => n.addEventListener('click', () => show(n.dataset.view)));
 
@@ -429,7 +430,143 @@ function uploadOne(file, path, onProgress) {
   });
 }
 
+/* ---------- review ---------- */
+const LETTERS = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح'];
+const RV_FILTERS = [['NeedsReview', 'تحتاج مراجعة'], ['AwaitingApproval', 'بانتظار الاعتماد'], ['Flagged', 'معلّمة للجنة'], ['Approved', 'معتمدة'], ['', 'الكل']];
+const RV_STATUS_AR = { NeedsReview: 'تحتاج مراجعة', AwaitingApproval: 'بانتظار الاعتماد', Flagged: 'معلّمة للجنة', Approved: 'معتمدة', Superseded: 'مُستبدَلة بعد تغيّر الملف' };
+const DOT = { High: 'g', Medium: 'y', Low: 'r' };
+let rv = { filter: 'NeedsReview', items: [], total: 0, index: 0, counts: {} };
+
+async function loadReview(reset) {
+  if (reset) { rv.items = []; rv.index = 0; }
+  let page;
+  try { page = await api('GET', `/api/review?status=${rv.filter}&skip=${rv.items.length}&take=100`); } catch { return; }
+  rv.items = rv.items.concat(page.items);
+  rv.total = page.total;
+  rv.counts = page.counts;
+  renderReview();
+}
+
+async function reloadKeepingPosition() {
+  const keepId = rv.items[rv.index]?.id;
+  const oldIndex = rv.index;
+  rv.items = [];
+  await loadReview(false);
+  const found = rv.items.findIndex(q => q.id === keepId);
+  rv.index = found >= 0 ? found : Math.min(oldIndex, Math.max(0, rv.items.length - 1));
+  renderReview();
+}
+
+function renderReview() {
+  const counts = rv.counts;
+  $('#n-review').textContent = fmt((counts.NeedsReview || 0) + (counts.AwaitingApproval || 0));
+  const filters = $('#rv-filters');
+  filters.replaceChildren(...RV_FILTERS.map(([key, label]) => {
+    const n = key ? (counts[key] || 0) : Object.values(counts).reduce((a, b) => a + b, 0);
+    const b = el('button', { className: 'btn sm' + (rv.filter === key ? ' on' : ''), type: 'button', textContent: `${label} ${fmt(n)}` });
+    b.onclick = () => { rv.filter = key; loadReview(true); };
+    return b;
+  }));
+
+  const list = $('#rv-list');
+  list.replaceChildren(...rv.items.map((q, i) => {
+    const row = el('button', { className: 'qrow', type: 'button', role: 'option' },
+      el('span', { className: 'dot ' + DOT[q.confidence] }),
+      el('span', {}, el('span', { className: 't', textContent: q.text }), el('span', { className: 'm', textContent: q.source })));
+    row.setAttribute('aria-selected', String(i === rv.index));
+    row.onclick = () => { rv.index = i; renderReview(); };
+    return row;
+  }));
+  if (!rv.items.length) list.append(el('div', { className: 'empty', textContent: 'لا توجد أسئلة هنا.' }));
+  $('#rv-more').hidden = rv.items.length >= rv.total;
+  list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  renderDetail(rv.items[rv.index]);
+}
+$('#rv-more').onclick = () => loadReview(false);
+
+function renderDetail(q) {
+  const box = $('#rv-detail');
+  box.replaceChildren();
+  if (!q) { box.append(el('div', { className: 'muted', textContent: 'انتهت المراجعة في هذه القائمة.' })); return; }
+  const locked = q.reviewStatus === 'Approved' || q.reviewStatus === 'Superseded';
+  const CONF_AR = { High: 'ثقة عالية', Medium: 'ثقة متوسطة', Low: 'تحتاج تدخلًا' };
+
+  box.append(el('div', { className: 'qstatus' },
+    el('span', { className: 'mono muted', textContent: q.code || ('#' + q.id) }),
+    el('span', { className: 'chip ' + (q.reviewStatus === 'Approved' ? 'ok' : q.reviewStatus === 'Flagged' ? 'warn' : 'wait'), textContent: RV_STATUS_AR[q.reviewStatus] || q.reviewStatus })));
+  box.append(el('h2', { textContent: q.text, style: 'white-space:pre-wrap;font-size:18px' }));
+
+  const opts = el('div', { className: 'opts' });
+  q.options.forEach((o, i) => {
+    const b = el('button', { className: 'opt' + (i === q.effectiveCorrectIndex ? ' correct' : ''), type: 'button', disabled: locked },
+      el('span', { className: 'L', textContent: LETTERS[i] || String(i + 1) }), el('span', { textContent: o }));
+    if (q.correctedIndex !== null && i === q.originalCorrectIndex) b.append(el('span', { className: 'orig', textContent: 'الإجابة في الملف' }));
+    b.onclick = () => setAnswer(q, i);
+    opts.append(b);
+  });
+  box.append(opts);
+
+  const issues = [...q.issues];
+  if (q.correctedIndex !== null) issues.unshift(`صُحّحت الإجابة يدويًا${q.reviewedBy ? ' بواسطة ' + q.reviewedBy : ''}.`);
+  if (!issues.length) box.append(el('div', { className: 'issue' }, el('span', { className: 'dot g' }), 'البنية سليمة: نص وخيارات وإجابة واحدة'));
+  issues.forEach(t => box.append(el('div', { className: 'issue' }, el('span', { className: 'dot ' + (q.effectiveCorrectIndex === null ? 'r' : 'y') }), t)));
+  box.append(el('div', { className: 'srcline', textContent: `${q.source} · ${q.location} · ${CONF_AR[q.confidence]} · طريقة كشف الإجابة: ${q.detector}` }));
+
+  const actions = el('div', { className: 'actions', style: 'margin-top:14px' });
+  if (q.reviewStatus === 'Approved' || q.reviewStatus === 'Flagged') {
+    actions.append(button('إعادة الفتح', () => act(q, 'reopen', 'أُعيد فتح السؤال.')));
+  }
+  if (!locked) {
+    actions.append(button('اعتماد', () => act(q, 'approve', 'اعتُمد السؤال.', () => act(q, 'reopen', null)), 'primary', 'A'));
+    if (q.reviewStatus !== 'Flagged') actions.append(button('تعليم للجنة', () => act(q, 'flag', 'عُلّم السؤال للجنة.', () => act(q, 'reopen', null)), '', 'F'));
+    if (q.correctedIndex !== null) actions.append(button('إلغاء التصحيح', () => setAnswer(q, null)));
+  }
+  actions.append(button('التالي', () => moveReview(1), '', 'J'));
+  box.append(actions);
+}
+
+function button(text, onclick, cls = '', key = '') {
+  const b = el('button', { className: 'btn ' + cls, type: 'button' }, text);
+  if (key) b.append(' ', el('kbd', { textContent: key }));
+  b.onclick = onclick;
+  return b;
+}
+
+async function setAnswer(q, index) {
+  const previous = q.correctedIndex;
+  try {
+    await api('POST', `/api/review/${q.id}/answer`, { index });
+    toast(index === null ? 'أُلغي التصحيح وعادت إجابة الملف.' : `عُيّن الخيار «${LETTERS[index]}» إجابة صحيحة.`,
+      () => api('POST', `/api/review/${q.id}/answer`, { index: previous }).then(reloadKeepingPosition));
+    await reloadKeepingPosition();
+  } catch (e) { toast(e.message); }
+}
+
+async function act(q, action, message, undo) {
+  try {
+    await api('POST', `/api/review/${q.id}/${action}`);
+    if (message) toast(message, undo);
+    await reloadKeepingPosition();
+  } catch (e) { toast(e.message); }
+}
+
+function moveReview(delta) {
+  if (!rv.items.length) return;
+  rv.index = (rv.index + delta + rv.items.length) % rv.items.length;
+  renderReview();
+}
+
+document.addEventListener('keydown', e => {
+  if ($('[data-screen="review"]').hidden || e.ctrlKey || e.metaKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  const q = rv.items[rv.index];
+  const key = e.key.toLowerCase();
+  if (key === 'j') moveReview(1);
+  else if (key === 'k') moveReview(-1);
+  else if (key === 'a' && q && q.reviewStatus !== 'Approved') act(q, 'approve', 'اعتُمد السؤال.', () => act(q, 'reopen', null));
+  else if (key === 'f' && q && q.reviewStatus !== 'Flagged') act(q, 'flag', 'عُلّم السؤال للجنة.', () => act(q, 'reopen', null));
+});
+
 /* ---------- start ---------- */
 loadMe();
 loadQueue();
-show(['dash', 'folders', 'drop'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');
+show(['dash', 'folders', 'drop', 'review'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');

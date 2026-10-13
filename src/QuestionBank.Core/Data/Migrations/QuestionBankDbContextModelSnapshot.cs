@@ -38,6 +38,9 @@ namespace QuestionBank.Core.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("CorrectedIndex")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("ExtractedAtUtc")
                         .HasColumnType("TEXT");
 
@@ -80,6 +83,13 @@ namespace QuestionBank.Core.Data.Migrations
                     b.Property<string>("ReviewStatus")
                         .IsRequired()
                         .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ReviewedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReviewedBy")
+                        .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
                     b.Property<long?>("SourceFileId")
@@ -369,6 +379,50 @@ namespace QuestionBank.Core.Data.Migrations
                     b.HasIndex("Status", "Id");
 
                     b.ToTable("SourceFiles");
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Review.AuditEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("AtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("EntityId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NewValue")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OldValue")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("User")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtUtc");
+
+                    b.HasIndex("EntityType", "EntityId");
+
+                    b.ToTable("AuditLog", (string)null);
                 });
 
             modelBuilder.Entity("QuestionBank.Core.Extraction.Question", b =>

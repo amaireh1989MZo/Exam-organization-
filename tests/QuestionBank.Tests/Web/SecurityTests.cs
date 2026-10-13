@@ -88,6 +88,8 @@ public sealed class SecurityTests : IDisposable
     [InlineData("GET", "/api/uploads")]
     [InlineData("POST", "/api/uploads")]
     [InlineData("GET", "/api/questions?uploadId=1")]
+    [InlineData("GET", "/api/review")]
+    [InlineData("POST", "/api/review/1/approve")]
     public async Task EveryOtherEndpoint_RequiresWindowsAuthentication(string method, string url)
     {
         var client = Client();
@@ -112,6 +114,8 @@ public sealed class SecurityTests : IDisposable
     [InlineData("CORP\\QB-BankManagers", "/api/uploads", HttpStatusCode.OK)]
     [InlineData("CORP\\QB-Reviewers", "/api/questions?uploadId=1", HttpStatusCode.OK)]
     [InlineData("CORP\\QB-Viewers", "/api/questions?uploadId=1", HttpStatusCode.Forbidden)]
+    [InlineData("CORP\\QB-Reviewers", "/api/review", HttpStatusCode.OK)]
+    [InlineData("CORP\\QB-Viewers", "/api/review", HttpStatusCode.Forbidden)]
     public async Task Roles_FollowConfiguredAdGroups(string group, string url, HttpStatusCode expected)
     {
         var client = Client(testAuth: true);
@@ -124,6 +128,7 @@ public sealed class SecurityTests : IDisposable
     [InlineData("/api/inventory/scan")]
     [InlineData("/api/queue")]
     [InlineData("/api/uploads")]
+    [InlineData("/api/review/1/approve")]
     public async Task StateChangingRequests_WithoutClientHeader_AreRejected_EvenWhenAuthorized(string url)
     {
         var client = Client(testAuth: true);

@@ -129,4 +129,14 @@ public sealed class FaultInjectingFileSystem(string sourceRoot) : ISourceFileSys
     }
 
     public int CallsFor(string relativePath) => _calls.GetValueOrDefault(relativePath);
+
+    public Func<string, Exception?>? ReadFault { get; set; }
+
+    public byte[] ReadFile(string fullPath, long maxBytes)
+    {
+        var rel = Path.GetRelativePath(sourceRoot, fullPath).Replace(Path.DirectorySeparatorChar, '/');
+        if (ReadFault?.Invoke(rel) is { } ex)
+            throw ex;
+        return _inner.ReadFile(fullPath, maxBytes);
+    }
 }

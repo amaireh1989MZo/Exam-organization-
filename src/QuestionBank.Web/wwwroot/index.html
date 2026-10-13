@@ -12,7 +12,7 @@
     <div class="brand"><i aria-hidden="true">ب</i>بنك الأسئلة</div>
     <button class="nav" data-view="dash" type="button">لوحة الحالة</button>
     <button class="nav" data-view="folders" type="button">مجلد الشبكة <span class="n" id="n-queue">0</span></button>
-    <span class="nav soon" aria-disabled="true">إسقاط الملفات <small>قريبًا</small></span>
+    <button class="nav" data-view="drop" type="button">إسقاط الملفات</button>
     <span class="nav soon" aria-disabled="true">المراجعة <small>قريبًا</small></span>
     <span class="nav soon" aria-disabled="true">التصنيف <small>قريبًا</small></span>
     <span class="nav soon" aria-disabled="true">سلة التصدير <small>قريبًا</small></span>
@@ -59,6 +59,29 @@
       </div>
     </section>
 
+    <!-- إسقاط الملفات -->
+    <section data-screen="drop" hidden>
+      <div class="head">
+        <div><h1>إسقاط الملفات</h1><p class="sub">اسحب ملفات أو مجلدًا كاملًا. تُحفظ نسخة في مجلد النتائج، والمكرر يُكشف ببصمة المحتوى. <span id="readable-note"></span></p></div>
+      </div>
+      <label class="drop" id="dropzone" for="picker">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M24 31V9"/><path d="m15 18 9-9 9 9"/><path d="M8 30v7a3 3 0 0 0 3 3h26a3 3 0 0 0 3-3v-7"/></svg>
+        <span class="big">اسحب ملفاتك أو مجلدًا هنا</span>
+        <span class="muted" id="drop-hint">أو اضغط للاختيار</span>
+      </label>
+      <input type="file" id="picker" multiple hidden>
+      <div class="grid g2 align-start" style="margin-top:16px">
+        <div class="panel">
+          <h2>الملفات</h2>
+          <div class="files" id="file-list"><div class="empty">لم يُرفع أي ملف بعد.</div></div>
+        </div>
+        <div class="panel" id="qpanel">
+          <h2 id="qpanel-title">الأسئلة المستخرجة</h2>
+          <div id="qpanel-body" class="muted">اختر ملفًا لعرض أسئلته.</div>
+        </div>
+      </div>
+    </section>
+
     <!-- مجلد الشبكة -->
     <section data-screen="folders" hidden>
       <div class="head">
@@ -72,7 +95,7 @@
         </div>
         <div class="panel">
           <h2>قائمة المعالجة</h2>
-          <p class="note">الطلبات تُحفظ بالترتيب. الاستخراج الفعلي يبدأ عند تفعيل قارئات الملفات في المرحلة 2.</p>
+          <p class="note">تُعالج الطلبات بالترتيب. الأسئلة تُستخرج الآن من ملفات TXT وGIFT، وباقي الصيغ تبقى بانتظار قارئها.</p>
           <div class="queue" id="queue" aria-label="قائمة المعالجة. أفلت مجلدًا هنا">
             <div class="empty" id="queue-empty">أفلت مجلدًا هنا</div>
           </div>

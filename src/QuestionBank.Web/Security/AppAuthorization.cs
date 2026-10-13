@@ -26,6 +26,9 @@ public static class AppPolicies
     /// <summary>مدير النظام أو مسؤول بنك الأسئلة.</summary>
     public const string ManageBank = "ManageBank";
 
+    /// <summary>مدير النظام أو مسؤول البنك أو المراجع الفني: الاطلاع على الأسئلة المستخرجة ومراجعتها.</summary>
+    public const string Review = "Review";
+
     /// <summary>أي دور من أدوار التطبيق. هذه السياسة الافتراضية لكل نقطة لم تُحدَّد لها سياسة.</summary>
     public const string AnyRole = "AnyRole";
 }
@@ -73,6 +76,7 @@ public static class AppAuthorizationExtensions
         services.AddAuthorizationBuilder()
             .AddPolicy(AppPolicies.Admin, p => RequireAnyGroup(p, mapping.GroupsFor(AppRoles.Admin)))
             .AddPolicy(AppPolicies.ManageBank, p => RequireAnyGroup(p, mapping.GroupsFor(AppRoles.Admin, AppRoles.BankManager)))
+            .AddPolicy(AppPolicies.Review, p => RequireAnyGroup(p, mapping.GroupsFor(AppRoles.Admin, AppRoles.BankManager, AppRoles.Reviewer)))
             .AddPolicy(AppPolicies.AnyRole, p => RequireAnyGroup(p, mapping.GroupsFor(AppRoles.All)))
             // لا توجد نقطة بلا حماية إلا ما يُعلَّم صراحة AllowAnonymous (مثل /health).
             .SetFallbackPolicy(new AuthorizationPolicyBuilder()

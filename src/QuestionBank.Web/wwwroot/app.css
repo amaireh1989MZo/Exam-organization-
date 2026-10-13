@@ -87,6 +87,30 @@ h2{font-size:17px;margin:0 0 10px;font-weight:600}
 .qitem b{overflow-wrap:anywhere}
 .qitem .meta{font-size:12.5px;color:var(--muted)}
 .empty{color:var(--muted);text-align:center;margin:auto;padding:20px}
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:36px 20px;text-align:center;background:var(--surface);cursor:pointer;transition:background .15s,border-color .15s}
+.drop.over{background:var(--drop);border-color:var(--accent)}
+.drop svg{width:48px;height:48px;color:var(--accent);display:block;margin:0 auto 8px}
+.drop .big{display:block;font-size:20px;font-weight:600}
+.files{display:flex;flex-direction:column;gap:8px}
+.file{all:unset;cursor:pointer;display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.file:hover{border-color:var(--accent)}
+.file[aria-current="true"]{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.file .ext{font-family:var(--f-mono);font-size:11px;background:var(--sunk);border-radius:6px;padding:6px 0;text-align:center;text-transform:uppercase}
+.file .nm{font-weight:500;overflow-wrap:anywhere}
+.file .meta{font-size:12.5px;color:var(--muted)}
+.file .bar{margin-top:4px}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.q{border-bottom:1px solid var(--line);padding:12px 0}
+.q:last-child{border-bottom:0}
+.q .qh{display:flex;gap:8px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.q .qt{font-weight:600;white-space:pre-wrap}
+.q ol{margin:8px 0 4px;padding-inline-start:22px}
+.q li.correct{color:var(--ok);font-weight:600}
+.q li.correct::after{content:" ✓"}
+.q .issues{font-size:13px;color:var(--amber)}
+.q .loc{font-size:12px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
+.dot.High{background:var(--ok)}.dot.Medium{background:var(--amber)}.dot.Low{background:var(--bad)}
 .toast{position:fixed;right:50%;transform:translateX(50%);bottom:20px;background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;display:flex;gap:14px;align-items:center;font-size:14px;z-index:9;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 .toast button{all:unset;cursor:pointer;font-weight:700;color:var(--accent-soft)}
 @media (max-width:1000px){.g5{grid-template-columns:repeat(3,1fr)}}

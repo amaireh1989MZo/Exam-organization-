@@ -19,7 +19,8 @@ async function api(method, url, body) {
   const res = await fetch(url, {
     method,
     credentials: 'same-origin',
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    // X-QB-Client: حماية CSRF؛ الخادم يرفض أي طلب يغيّر شيئًا بدونها.
+    headers: Object.assign({ 'X-QB-Client': 'web' }, body ? { 'Content-Type': 'application/json' } : {}),
     body: body ? JSON.stringify(body) : undefined
   });
   if (res.status === 403) { $('#denied').hidden = false; throw new Error('forbidden'); }
@@ -49,6 +50,7 @@ function show(view) {
   history.replaceState(null, '', '#' + view);
   if (view === 'dash') refreshStatus();
   if (view === 'folders') { loadRoot(); loadQueue(); }
+  if (view === 'drop') loadUploads();
 }
 $$('.nav[data-view]').forEach(n => n.addEventListener('click', () => show(n.dataset.view)));
 
@@ -278,7 +280,156 @@ async function loadQueue() {
   });
 }
 
+/* ---------- drop & upload ---------- */
+const STATUS_FILE_AR = { Pending: 'بانتظار قارئ لهذه الصيغة', Completed: 'تم', Failed: 'فشل', Processing: 'يُعالج' };
+const ERR_AR = { ReaderError: 'تعذّرت قراءة بنية الملف' };
+let uploadInfo = { maxFileSizeMb: 50, allowedExtensions: [], readableExtensions: [] };
+let selectedUpload = null;
+
+async function loadUploads() {
+  let data;
+  try { data = await api('GET', '/api/uploads'); } catch { return; }
+  uploadInfo = data;
+  $('#drop-hint').textContent = `أو اضغط للاختيار · ${data.allowedExtensions.join(' · ').toUpperCase()} · حتى ${fmt(data.maxFileSizeMb)} ميغابايت`;
+  $('#readable-note').textContent = `الأسئلة تُستخرج الآن من: ${data.readableExtensions.join('، ').toUpperCase()}. باقي الصيغ تُحفظ وتنتظر قارئها.`;
+  const list = $('#file-list');
+  list.replaceChildren();
+  if (!data.items.length) { list.append(el('div', { className: 'empty', textContent: 'لم يُرفع أي ملف بعد.' })); return; }
+  data.items.forEach(u => list.append(uploadCard(u)));
+}
+
+function uploadCard(u) {
+  const card = el('button', { className: 'file', type: 'button' });
+  const chip = statusChip(u);
+  card.append(
+    el('span', { className: 'ext', textContent: (u.extension || '?').slice(0, 4) }),
+    el('span', {}, el('span', { className: 'nm', textContent: u.clientPath || u.originalName }),
+      el('br'), el('span', { className: 'meta', textContent: `${fmt(Math.ceil(u.sizeBytes / 1024))} KB · ${u.uploadedBy}` })),
+    chip);
+  card.dataset.id = u.id;
+  if (selectedUpload === u.id) card.setAttribute('aria-current', 'true');
+  card.addEventListener('click', () => showQuestions(u));
+  return card;
+}
+
+function statusChip(u) {
+  if (u.status === 'Completed') return el('span', { className: 'chip ok', textContent: `تم · ${fmt(u.questionCount)} سؤال` });
+  if (u.status === 'Failed') return el('span', { className: 'chip bad', textContent: ERR_AR[u.lastErrorCode] || 'فشل' });
+  return el('span', { className: 'chip wait', textContent: STATUS_FILE_AR[u.status] || u.status });
+}
+
+async function showQuestions(u) {
+  selectedUpload = u.id;
+  $$('#file-list .file').forEach(c => c.dataset.id == u.id ? c.setAttribute('aria-current', 'true') : c.removeAttribute('aria-current'));
+  $('#qpanel-title').textContent = `الأسئلة المستخرجة · ${u.originalName}`;
+  const body = $('#qpanel-body');
+  if (u.status !== 'Completed') {
+    body.className = 'muted';
+    body.textContent = u.status === 'Pending' ? 'حُفظ الملف، وسيُستخرج عند تفعيل قارئ هذه الصيغة.' : 'تعذّر الاستخراج من هذا الملف.';
+    return;
+  }
+  let questions;
+  try { questions = await api('GET', '/api/questions?uploadId=' + u.id); } catch (e) { toast(e.message); return; }
+  body.className = '';
+  body.replaceChildren();
+  if (!questions.length) { body.className = 'muted'; body.textContent = 'لم تُكتشف أسئلة في هذا الملف.'; return; }
+  const CONF_AR = { High: 'ثقة عالية', Medium: 'ثقة متوسطة', Low: 'تحتاج تدخلًا' };
+  for (const q of questions) {
+    const ol = el('ol');
+    q.options.forEach((o, i) => ol.append(el('li', { className: i === q.correctIndex ? 'correct' : '', textContent: o })));
+    const dot = el('span', { className: 'dot ' + q.confidence, title: CONF_AR[q.confidence] });
+    body.append(el('div', { className: 'q' },
+      el('div', { className: 'qh' }, el('span', { className: 'qt', textContent: `${fmt(q.order)}. ${q.text}` }), dot),
+      ol,
+      q.issues.length ? el('div', { className: 'issues', textContent: q.issues.join(' · ') }) : '',
+      el('div', { className: 'loc', textContent: `${q.location}${q.code ? ' · ' + q.code : ''} · ${CONF_AR[q.confidence]}` })));
+  }
+}
+
+const dz = $('#dropzone');
+['dragenter', 'dragover'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.remove('over'); }));
+dz.addEventListener('drop', async e => {
+  const items = [...(e.dataTransfer.items || [])];
+  const files = [];
+  if (items.length && items[0].webkitGetAsEntry) {
+    for (const it of items) { const entry = it.webkitGetAsEntry(); if (entry) await walk(entry, '', files); }
+  } else {
+    [...e.dataTransfer.files].forEach(f => files.push({ file: f, path: f.name }));
+  }
+  uploadAll(files);
+});
+$('#picker').addEventListener('change', e => { uploadAll([...e.target.files].map(f => ({ file: f, path: f.name }))); e.target.value = ''; });
+
+async function walk(entry, prefix, out) {
+  if (entry.isFile) {
+    await new Promise(res => entry.file(f => { out.push({ file: f, path: prefix + f.name }); res(); }, res));
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    let batch;
+    do {
+      batch = await new Promise(res => reader.readEntries(res, () => res([])));
+      for (const child of batch) await walk(child, prefix + entry.name + '/', out);
+    } while (batch.length);
+  }
+}
+
+async function uploadAll(files) {
+  if (!files.length) return;
+  const list = $('#file-list');
+  list.querySelector('.empty')?.remove();
+  // ملف واحد في كل مرة: الخادم يستخرج فورًا، والتقدم واضح لكل ملف.
+  for (const { file, path } of files) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const bar = el('div', { className: 'bar' }, el('span'));
+    const chip = el('span', { className: 'chip run', textContent: 'يُرفع…' });
+    const meta = el('span', { className: 'meta', textContent: `${fmt(Math.ceil(file.size / 1024))} KB` });
+    const card = el('div', { className: 'file' },
+      el('span', { className: 'ext', textContent: ext.slice(0, 4) || '?' }),
+      el('span', {}, el('span', { className: 'nm', textContent: path }), el('br'), meta, bar), chip);
+    list.prepend(card);
+
+    if (!uploadInfo.allowedExtensions.includes(ext)) { finish(card, chip, bar, 'bad', 'صيغة غير مقبولة'); continue; }
+    if (file.size > uploadInfo.maxFileSizeMb * 1024 * 1024) { finish(card, chip, bar, 'bad', 'أكبر من الحد المسموح'); continue; }
+    try {
+      const res = await uploadOne(file, path, p => { bar.firstChild.style.width = Math.round(p * 100) + '%'; });
+      const replacement = uploadCard(res.upload);
+      if (res.duplicate) replacement.querySelector('.meta').textContent += ' · رُفع سابقًا بالمحتوى نفسه';
+      card.replaceWith(replacement);
+    } catch (e) {
+      finish(card, chip, bar, 'bad', e.message);
+    }
+  }
+}
+
+function finish(card, chip, bar, cls, text) {
+  chip.className = 'chip ' + cls;
+  chip.textContent = text;
+  bar.remove();
+}
+
+function uploadOne(file, path, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/uploads');
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('X-QB-Client', 'web');
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data?.message || 'تعذّر رفع الملف.'));
+    };
+    xhr.onerror = () => reject(new Error('انقطع الاتصال أثناء الرفع.'));
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('path', path);
+    xhr.send(form);
+  });
+}
+
 /* ---------- start ---------- */
 loadMe();
 loadQueue();
-show(['dash', 'folders'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');
+show(['dash', 'folders', 'drop'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');

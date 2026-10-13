@@ -332,6 +332,7 @@ public sealed class InventoryScannerTests : IDisposable
     {
         private readonly PhysicalSourceFileSystem _inner = new();
         public bool DirectoryExists(string fullPath) => _inner.DirectoryExists(fullPath);
+        public byte[] ReadFile(string fullPath, long maxBytes) => _inner.ReadFile(fullPath, maxBytes);
 
         public IReadOnlyList<SourceEntry> ListDirectory(string fullPath)
         {

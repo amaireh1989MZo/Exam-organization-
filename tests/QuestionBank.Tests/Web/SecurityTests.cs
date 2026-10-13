@@ -85,6 +85,9 @@ public sealed class SecurityTests : IDisposable
     [InlineData("GET", "/api/inventory/tree")]
     [InlineData("GET", "/api/queue")]
     [InlineData("POST", "/api/queue")]
+    [InlineData("GET", "/api/uploads")]
+    [InlineData("POST", "/api/uploads")]
+    [InlineData("GET", "/api/questions?uploadId=1")]
     public async Task EveryOtherEndpoint_RequiresWindowsAuthentication(string method, string url)
     {
         var client = Client();
@@ -105,12 +108,38 @@ public sealed class SecurityTests : IDisposable
     [InlineData("CORP\\QB-Reviewers", "/api/queue", HttpStatusCode.Forbidden)]
     [InlineData("CORP\\QB-BankManagers", "/api/queue", HttpStatusCode.OK)]
     [InlineData("CORP\\QB-BankManagers", "/api/inventory/tree", HttpStatusCode.OK)]
+    [InlineData("CORP\\QB-Reviewers", "/api/uploads", HttpStatusCode.Forbidden)]
+    [InlineData("CORP\\QB-BankManagers", "/api/uploads", HttpStatusCode.OK)]
+    [InlineData("CORP\\QB-Reviewers", "/api/questions?uploadId=1", HttpStatusCode.OK)]
+    [InlineData("CORP\\QB-Viewers", "/api/questions?uploadId=1", HttpStatusCode.Forbidden)]
     public async Task Roles_FollowConfiguredAdGroups(string group, string url, HttpStatusCode expected)
     {
         var client = Client(testAuth: true);
         client.DefaultRequestHeaders.Add(TestAuthHandler.GroupsHeader, group);
         var response = await client.GetAsync(url);
         Assert.Equal(expected, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/api/inventory/scan")]
+    [InlineData("/api/queue")]
+    [InlineData("/api/uploads")]
+    public async Task StateChangingRequests_WithoutClientHeader_AreRejected_EvenWhenAuthorized(string url)
+    {
+        var client = Client(testAuth: true);
+        client.DefaultRequestHeaders.Add(TestAuthHandler.GroupsHeader, "CORP\\QB-BankManagers");
+        var response = await client.PostAsync(url, new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task StateChangingRequest_WithClientHeader_IsAccepted()
+    {
+        var client = Client(testAuth: true);
+        client.DefaultRequestHeaders.Add(TestAuthHandler.GroupsHeader, "CORP\\QB-BankManagers");
+        client.DefaultRequestHeaders.Add("X-QB-Client", "web");
+        var response = await client.PostAsync("/api/inventory/scan", null);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
     }
 
     [Fact]

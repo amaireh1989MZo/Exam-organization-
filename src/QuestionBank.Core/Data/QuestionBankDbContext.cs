@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using QuestionBank.Core.Extraction;
 using QuestionBank.Core.Inventory;
 
 namespace QuestionBank.Core.Data;
@@ -9,6 +10,8 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<ScanRun> ScanRuns => Set<ScanRun>();
     public DbSet<ScanDirectory> ScanDirectories => Set<ScanDirectory>();
     public DbSet<ProcessingQueueItem> ProcessingQueue => Set<ProcessingQueueItem>();
+    public DbSet<Question> Questions => Set<Question>();
+    public DbSet<Upload> Uploads => Set<Upload>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,6 +51,41 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
             e.Property(x => x.RequestedBy).HasMaxLength(256).IsRequired();
             e.HasIndex(x => new { x.Status, x.Id });
+        });
+
+        modelBuilder.Entity<Question>(e =>
+        {
+            e.Property(x => x.StableKey).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ContentHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.OriginalCode).HasMaxLength(200);
+            e.Property(x => x.AnswerDetector).HasMaxLength(64);
+            e.Property(x => x.Confidence).HasConversion<string>().HasMaxLength(16);
+            e.Property(x => x.ReviewStatus).HasConversion<string>().HasMaxLength(32);
+            e.Property(x => x.Location).HasMaxLength(200);
+            e.Property(x => x.ReaderName).HasMaxLength(32);
+            e.Property(x => x.ReaderVersion).HasMaxLength(16);
+            e.HasIndex(x => x.StableKey).IsUnique();
+            e.HasIndex(x => x.SourceFileId);
+            e.HasIndex(x => x.UploadId);
+            e.HasIndex(x => x.ContentHash);
+            e.HasIndex(x => x.ReviewStatus);
+            e.HasOne<SourceFile>().WithMany().HasForeignKey(x => x.SourceFileId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Upload>().WithMany().HasForeignKey(x => x.UploadId).OnDelete(DeleteBehavior.Restrict);
+            e.ToTable(t => t.HasCheckConstraint("CK_Questions_OneSource",
+                "(SourceFileId IS NULL) <> (UploadId IS NULL)"));
+        });
+
+        modelBuilder.Entity<Upload>(e =>
+        {
+            e.Property(x => x.OriginalName).HasMaxLength(255).IsRequired();
+            e.Property(x => x.ClientPath).HasMaxLength(1024);
+            e.Property(x => x.Extension).HasMaxLength(32);
+            e.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.StoredName).HasMaxLength(128).IsRequired();
+            e.Property(x => x.UploadedBy).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+            e.Property(x => x.LastErrorCode).HasMaxLength(100);
+            e.HasIndex(x => x.Sha256).IsUnique();
         });
     }
 }

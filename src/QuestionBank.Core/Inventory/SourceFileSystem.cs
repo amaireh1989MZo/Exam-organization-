@@ -16,6 +16,9 @@ public interface ISourceFileSystem
 
     /// <summary>يعدّد محتوى مجلد واحد فقط (بدون تكرار تنازلي). يرمي الاستثناء عند تعذر فتح المجلد.</summary>
     IReadOnlyList<SourceEntry> ListDirectory(string fullPath);
+
+    /// <summary>يقرأ محتوى ملف للقراءة فقط، ويسمح لبرامج أخرى بفتحه في الوقت نفسه. يرفض ما يتجاوز الحد.</summary>
+    byte[] ReadFile(string fullPath, long maxBytes);
 }
 
 public sealed class PhysicalSourceFileSystem : ISourceFileSystem
@@ -30,6 +33,18 @@ public sealed class PhysicalSourceFileSystem : ISourceFileSystem
     };
 
     public bool DirectoryExists(string fullPath) => Directory.Exists(fullPath);
+
+    public byte[] ReadFile(string fullPath, long maxBytes)
+    {
+        // FileAccess.Read فقط، وFileShare يسمح للآخرين بالقراءة والكتابة: الجرد لا يقفل ملفات الموظفين.
+        using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete, 81920, FileOptions.SequentialScan);
+        if (stream.Length > maxBytes)
+            throw new IOException("File exceeds the configured size limit.");
+        var buffer = new byte[stream.Length];
+        stream.ReadExactly(buffer);
+        return buffer;
+    }
 
     public IReadOnlyList<SourceEntry> ListDirectory(string fullPath)
     {

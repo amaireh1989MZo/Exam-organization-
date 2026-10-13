@@ -52,6 +52,12 @@ public sealed class Question
 
     public string? ReviewedBy { get; set; }
     public DateTime? ReviewedAtUtc { get; set; }
+
+    /// <summary>بصمة النص بعد التطبيع الآمن (للتكرار). النص المحفوظ لا يتغير.</summary>
+    public string? StemHash { get; set; }
+
+    /// <summary>بصمة النص والخيارات بعد التطبيع، بغض النظر عن ترتيب الخيارات.</summary>
+    public string? FullHash { get; set; }
 }
 
 /// <summary>ملف رفعه مستخدم من المتصفح. يُحفظ في مجلد النتائج باسم بصمته، وليس في المصدر.</summary>

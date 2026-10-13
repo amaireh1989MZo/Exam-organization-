@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -14,10 +15,25 @@ public sealed class UploadOptions
     [Range(1, 2048)]
     public int MaxFileSizeMb { get; set; } = 50;
 
-    /// <summary>الصيغ المقبولة في الرفع. ZIP غير مقبول حتى يُبنى فك آمن له (حماية من الملفات المضغوطة الخبيثة).</summary>
+    /// <summary>الصيغ المقبولة داخل الرفع أو داخل ملف ZIP.</summary>
     public string[] AllowedExtensions { get; set; } = ["docx", "xlsx", "xls", "doc", "pdf", "txt", "md", "gift"];
 
+    /// <summary>قبول ملفات ZIP وفكّها بأمان. يمكن إيقافه من الإعدادات.</summary>
+    public bool AllowZip { get; set; } = true;
+
+    [Range(1, 100_000)]
+    public int MaxZipEntries { get; set; } = 2000;
+
+    /// <summary>الحجم الكلي بعد الفك. حماية من "قنبلة ZIP".</summary>
+    [Range(1, 100_000)]
+    public int MaxZipTotalMb { get; set; } = 1024;
+
+    /// <summary>أقصى نسبة بين الحجم بعد الفك وقبله لعنصر واحد. الملفات النصية العادية أقل من 10 غالبًا.</summary>
+    [Range(2, 10_000)]
+    public int MaxCompressionRatio { get; set; } = 100;
+
     public long MaxBytes => MaxFileSizeMb * 1024L * 1024L;
+    public long MaxZipTotalBytes => MaxZipTotalMb * 1024L * 1024L;
 }
 
 public static class UploadErrorCodes
@@ -26,7 +42,16 @@ public static class UploadErrorCodes
     public const string TooLarge = "TooLarge";
     public const string Empty = "Empty";
     public const string OutputUnavailable = "OutputUnavailable";
+    public const string InvalidArchive = "InvalidArchive";
+    public const string ArchiveTooLarge = "ArchiveTooLarge";
+    public const string TooManyEntries = "TooManyEntries";
+    public const string SuspiciousCompression = "SuspiciousCompression";
+    public const string NestedArchive = "NestedArchive";
 }
+
+public sealed record ArchiveSkip(string Entry, string Code, string Message);
+
+public sealed record ArchiveResult(IReadOnlyList<UploadResult> Items, IReadOnlyList<ArchiveSkip> Skipped, string? ErrorCode, string? Message);
 
 public sealed record UploadView(
     long Id, string OriginalName, string? ClientPath, string? Extension, long SizeBytes, string Status,
@@ -117,6 +142,110 @@ public sealed class UploadService(
                 await db.SaveChangesAsync(cancellationToken);
             }
             return new UploadResult(ToView(upload), false, null, null);
+        }
+        finally
+        {
+            if (File.Exists(tmp))
+                File.Delete(tmp);
+        }
+    }
+
+    public static bool IsArchive(string fileName) =>
+        string.Equals(Path.GetExtension(SafeDisplayName(fileName, 255)), ".zip", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// يفك ملف ZIP بأمان: حدود لعدد العناصر والحجم الكلي ونسبة الضغط، وقراءة فعلية محدودة لأن الأحجام المعلنة
+    /// داخل ZIP قد تكون مزيفة، ورفض ZIP داخل ZIP. أسماء العناصر لا تُستخدم كمسارات أبدًا؛ كل عنصر يمر بـ SaveAsync.
+    /// </summary>
+    public async Task<ArchiveResult> SaveArchiveAsync(Stream content, string fileName, string uploadedBy, CancellationToken cancellationToken)
+    {
+        var opt = uploadOptions.Value;
+        if (!opt.AllowZip)
+            return new ArchiveResult([], [], UploadErrorCodes.ExtensionNotAllowed, "ملفات ZIP غير مقبولة في الإعدادات.");
+        var root = UploadsRoot();
+        if (root is null)
+            return new ArchiveResult([], [], UploadErrorCodes.OutputUnavailable, "مجلد النتائج غير مضبوط أو غير صالح.");
+
+        var archiveName = SafeDisplayName(fileName, 255);
+        var tmpDir = Path.Combine(root, ".tmp");
+        Directory.CreateDirectory(tmpDir);
+        var tmp = Path.Combine(tmpDir, Guid.NewGuid().ToString("N") + ".zip");
+        try
+        {
+            await using (var output = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            {
+                try
+                {
+                    await new LimitedReadStream(content, opt.MaxBytes).CopyToAsync(output, cancellationToken);
+                }
+                catch (InvalidDataException)
+                {
+                    return new ArchiveResult([], [], UploadErrorCodes.TooLarge, $"حجم الملف أكبر من {opt.MaxFileSizeMb} ميغابايت.");
+                }
+            }
+
+            ZipArchive zip;
+            try
+            {
+                zip = ZipFile.OpenRead(tmp);
+            }
+            catch (InvalidDataException)
+            {
+                return new ArchiveResult([], [], UploadErrorCodes.InvalidArchive, "الملف ليس ZIP صالحًا.");
+            }
+
+            using (zip)
+            {
+                var files = zip.Entries.Where(e => !e.FullName.EndsWith('/') && !e.FullName.EndsWith('\\')).ToList();
+                if (files.Count > opt.MaxZipEntries)
+                    return new ArchiveResult([], [], UploadErrorCodes.TooManyEntries, $"عدد الملفات داخل ZIP أكبر من {opt.MaxZipEntries}.");
+                if (files.Sum(e => e.Length) > opt.MaxZipTotalBytes)
+                    return new ArchiveResult([], [], UploadErrorCodes.ArchiveTooLarge, $"حجم محتوى ZIP بعد الفك أكبر من {opt.MaxZipTotalMb} ميغابايت.");
+
+                var items = new List<UploadResult>();
+                var skipped = new List<ArchiveSkip>();
+                long totalRead = 0;
+                foreach (var entry in files)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var entryName = SafeDisplayName(entry.FullName, 1024, keepSeparators: true);
+                    var ext = ExtensionOf(SafeDisplayName(entry.FullName, 255));
+                    if (ext == "zip")
+                    {
+                        skipped.Add(new(entryName, UploadErrorCodes.NestedArchive, "ملف ZIP داخل ZIP غير مقبول."));
+                        continue;
+                    }
+                    if (ext is null || !opt.AllowedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                    {
+                        skipped.Add(new(entryName, UploadErrorCodes.ExtensionNotAllowed, "صيغة غير مقبولة."));
+                        continue;
+                    }
+                    if (entry.CompressedLength > 0 && entry.Length / (double)entry.CompressedLength > opt.MaxCompressionRatio)
+                    {
+                        skipped.Add(new(entryName, UploadErrorCodes.SuspiciousCompression, "نسبة ضغط غير طبيعية."));
+                        continue;
+                    }
+
+                    // القراءة الفعلية محدودة بالأصغر من: حد الملف، والمتبقي من الحد الكلي، والحجم المعلن + 1.
+                    var limit = Math.Min(Math.Min(opt.MaxBytes, opt.MaxZipTotalBytes - totalRead), entry.Length + 1);
+                    try
+                    {
+                        await using var entryStream = entry.Open();
+                        var limited = new LimitedReadStream(entryStream, limit);
+                        var result = await SaveAsync(limited, entry.Name, $"{archiveName}/{entryName}", uploadedBy, cancellationToken);
+                        totalRead += limited.BytesRead;
+                        if (result.ErrorCode is not null)
+                            skipped.Add(new(entryName, result.ErrorCode, result.Message ?? ""));
+                        else
+                            items.Add(result);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        skipped.Add(new(entryName, UploadErrorCodes.SuspiciousCompression, "حجم العنصر الفعلي يخالف المعلن أو يتجاوز الحد."));
+                    }
+                }
+                return new ArchiveResult(items, skipped, null, null);
+            }
         }
         finally
         {

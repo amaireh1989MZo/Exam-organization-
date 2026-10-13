@@ -69,6 +69,10 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.ReaderName).HasMaxLength(32);
             e.Property(x => x.ReaderVersion).HasMaxLength(16);
             e.Property(x => x.ReviewedBy).HasMaxLength(256);
+            e.Property(x => x.StemHash).HasMaxLength(32);
+            e.Property(x => x.FullHash).HasMaxLength(32);
+            e.HasIndex(x => x.StemHash);
+            e.HasIndex(x => x.FullHash);
             e.HasIndex(x => x.StableKey).IsUnique();
             e.HasIndex(x => x.SourceFileId);
             e.HasIndex(x => x.UploadId);

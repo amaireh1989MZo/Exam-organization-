@@ -83,6 +83,10 @@ namespace QuestionBank.Core.Data.Migrations
                     b.Property<DateTime>("ExtractedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("FullHash")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("IssuesJson")
                         .HasColumnType("TEXT");
 
@@ -139,6 +143,10 @@ namespace QuestionBank.Core.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("StemHash")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
                     b.Property<long?>("UploadId")
                         .HasColumnType("INTEGER");
 
@@ -146,12 +154,16 @@ namespace QuestionBank.Core.Data.Migrations
 
                     b.HasIndex("ContentHash");
 
+                    b.HasIndex("FullHash");
+
                     b.HasIndex("ReviewStatus");
 
                     b.HasIndex("SourceFileId");
 
                     b.HasIndex("StableKey")
                         .IsUnique();
+
+                    b.HasIndex("StemHash");
 
                     b.HasIndex("UploadId");
 

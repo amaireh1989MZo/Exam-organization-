@@ -53,6 +53,7 @@ function show(view) {
   if (view === 'drop') loadUploads();
   if (view === 'review') loadReview(true);
   if (view === 'export') loadExport();
+  if (view === 'dups') loadDups();
 }
 $$('.nav[data-view]').forEach(n => n.addEventListener('click', () => show(n.dataset.view)));
 
@@ -160,6 +161,16 @@ function renderExtensions(exts) {
 $('#btn-scan').onclick = async () => {
   try { await api('POST', '/api/inventory/scan'); toast('طُلب بدء الجرد.'); setTimeout(refreshStatus, 500); }
   catch (e) { toast(e.message); }
+};
+$('#btn-report').onclick = async () => {
+  const b = $('#btn-report');
+  b.disabled = true; b.textContent = 'يُنشأ التقرير…';
+  try {
+    const r = await api('POST', '/api/reports/excel');
+    toast(`أُنشئ التقرير: ${fmt(r.questions)} سؤال و${fmt(r.files)} ملف.`);
+    location.href = '/api/reports/' + encodeURIComponent(r.fileName);
+  } catch (e) { toast(e.message); }
+  finally { b.disabled = false; b.textContent = 'تقرير Excel'; }
 };
 $('#btn-abandon').onclick = () => { $('#abandon-confirm').hidden = false; $('#btn-abandon').hidden = true; };
 $('#abandon-no').onclick = () => { $('#abandon-confirm').hidden = true; $('#btn-abandon').hidden = false; };
@@ -285,7 +296,7 @@ async function loadQueue() {
 /* ---------- drop & upload ---------- */
 const STATUS_FILE_AR = { Pending: 'بانتظار قارئ لهذه الصيغة', Completed: 'تم', Failed: 'فشل', Processing: 'يُعالج' };
 const ERR_AR = { ReaderError: 'تعذّرت قراءة بنية الملف' };
-let uploadInfo = { maxFileSizeMb: 50, allowedExtensions: [], readableExtensions: [] };
+let uploadInfo = null; // يُحمَّل من الخادم؛ لا نحكم على صيغة ملف قبل وصوله
 let selectedUpload = null;
 
 async function loadUploads() {
@@ -378,6 +389,8 @@ async function walk(entry, prefix, out) {
 
 async function uploadAll(files) {
   if (!files.length) return;
+  if (!uploadInfo) await loadUploads();
+  if (!uploadInfo) { toast('تعذّر تحميل إعدادات الرفع. أعد المحاولة.'); return; }
   const list = $('#file-list');
   list.querySelector('.empty')?.remove();
   // ملف واحد في كل مرة: الخادم يستخرج فورًا، والتقدم واضح لكل ملف.
@@ -395,6 +408,19 @@ async function uploadAll(files) {
     if (file.size > uploadInfo.maxFileSizeMb * 1024 * 1024) { finish(card, chip, bar, 'bad', 'أكبر من الحد المسموح'); continue; }
     try {
       const res = await uploadOne(file, path, p => { bar.firstChild.style.width = Math.round(p * 100) + '%'; });
+      if (res.archive) {
+        // ملف ZIP: بطاقة لكل ملف استُخرج منه، وملخص لما تُجوهل.
+        const cards = res.items.map(i => {
+          const c = uploadCard(i.upload);
+          if (i.duplicate) c.querySelector('.meta').append(' · رُفع سابقًا بالمحتوى نفسه');
+          return c;
+        });
+        finish(card, chip, bar, res.skipped.length ? 'warn' : 'ok',
+          `ZIP: ${fmt(res.items.length)} ملف${res.skipped.length ? ` · تُجوهل ${fmt(res.skipped.length)}` : ''}`);
+        if (res.skipped.length) meta.append(' · ', el('span', { textContent: res.skipped.map(s => `${s.entry} (${s.message})`).join('، ') }));
+        card.after(...cards);
+        continue;
+      }
       const replacement = uploadCard(res.upload);
       if (res.duplicate) replacement.querySelector('.meta').append(' · رُفع سابقًا بالمحتوى نفسه');
       card.replaceWith(replacement);
@@ -672,7 +698,35 @@ async function loadExportHistory() {
   }
 }
 
+/* ---------- duplicates ---------- */
+let dupKind = 'Exact';
+async function loadDups() {
+  let page;
+  try { page = await api('GET', '/api/quality/duplicates?kind=' + dupKind); } catch { return; }
+  $('#n-dups').textContent = fmt(page.exactGroups);
+  $('#dup-filters').replaceChildren(...[['Exact', 'تكرار حرفي', page.exactGroups], ['SameStem', 'النص نفسه بخيارات مختلفة', page.sameStemGroups]].map(([k, label, n]) => {
+    const b = el('button', { className: 'btn sm' + (dupKind === k ? ' on' : ''), type: 'button', textContent: `${label} ${fmt(n)}` });
+    b.onclick = () => { dupKind = k; loadDups(); };
+    return b;
+  }));
+  const box = $('#dup-groups');
+  box.replaceChildren();
+  if (!page.groups.length) { box.append(el('div', { className: 'panel muted', textContent: 'لا توجد مجموعات في هذه الفئة.' })); return; }
+  page.groups.forEach((g, gi) => {
+    const members = el('div', { className: 'dmembers' }, ...g.members.map(m => {
+      const ol = el('ol');
+      m.options.forEach((o, i) => ol.append(el('li', { className: i === m.effectiveCorrectIndex ? 'correct' : '', textContent: o })));
+      return el('div', { className: 'dm' },
+        el('div', { className: 't', textContent: m.text }), ol,
+        el('div', { className: 'm' }, el('bdi', { textContent: m.source }), ` · ${m.location} · ${RV_STATUS_AR[m.reviewStatus] || m.reviewStatus}`));
+    }));
+    const head = el('div', { className: 'dh' }, el('h2', { textContent: `مجموعة ${fmt(gi + 1)} · ${fmt(g.count)} نسخ`, style: 'margin:0' }));
+    if (g.answersDiffer) head.append(el('span', { className: 'chip bad', textContent: 'الإجابات مختلفة بين النسخ' }));
+    box.append(el('div', { className: 'panel dgroup' }, head, members));
+  });
+}
+
 /* ---------- start ---------- */
 loadMe();
 loadQueue();
-show(['dash', 'folders', 'drop', 'review', 'export'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');
+show(['dash', 'folders', 'drop', 'review', 'export', 'dups'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');

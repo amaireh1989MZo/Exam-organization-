@@ -14,6 +14,7 @@
     <button class="nav" data-view="folders" type="button">مجلد الشبكة <span class="n" id="n-queue">0</span></button>
     <button class="nav" data-view="drop" type="button">إسقاط الملفات</button>
     <button class="nav" data-view="review" type="button">المراجعة <span class="n" id="n-review">0</span></button>
+    <button class="nav" data-view="dups" type="button">التكرار <span class="n" id="n-dups">0</span></button>
     <span class="nav soon" aria-disabled="true">التصنيف <small>قريبًا</small></span>
     <button class="nav" data-view="export" type="button">سلة التصدير <span class="n" id="n-basket">0</span></button>
     <div class="who"><b id="who-name">…</b><span id="who-roles"></span></div>
@@ -28,6 +29,7 @@
         <div><h1>لوحة الحالة</h1><p class="sub">جرد ملفات مجلد الشبكة. الجرد يسجّل الملفات فقط ولا يفتح محتواها ولا يعدّلها.</p></div>
         <div class="actions">
           <button class="btn primary" id="btn-scan" type="button">بدء الجرد</button>
+          <button class="btn" id="btn-report" type="button">تقرير Excel</button>
           <button class="btn" id="btn-abandon" type="button" hidden>إيقاف العملية نهائيًا</button>
           <span class="confirm" id="abandon-confirm" hidden>
             إيقاف نهائي؟ الجرد التالي يبدأ من جديد.
@@ -128,6 +130,15 @@
         <h2>عمليات التصدير السابقة</h2>
         <div id="ex-history" class="muted">لا توجد بعد.</div>
       </div>
+    </section>
+
+    <!-- التكرار -->
+    <section data-screen="dups" hidden>
+      <div class="head">
+        <div><h1>التكرار</h1><p class="sub">أسئلة متطابقة بعد تجاهل التشكيل وصور الحروف وترتيب الخيارات. لا يُحذف أي سؤال تلقائيًا؛ القرار للجنة.</p></div>
+      </div>
+      <div class="actions filters" id="dup-filters"></div>
+      <div id="dup-groups"></div>
     </section>
 
     <!-- مجلد الشبكة -->

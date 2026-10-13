@@ -7,6 +7,7 @@
 - **الاستخراج والرفع:** [`docs/EXTRACTION_AR.md`](docs/EXTRACTION_AR.md)
 - **المراجعة وسجل التدقيق:** [`docs/REVIEW_AR.md`](docs/REVIEW_AR.md)
 - **التصدير إلى Moodle:** [`docs/EXPORT_AR.md`](docs/EXPORT_AR.md)
+- **التكرار وZIP وتقرير Excel:** [`docs/QUALITY_AR.md`](docs/QUALITY_AR.md)
 - **الأفكار والخطة التفصيلية:** [`docs/interface/PROPOSAL_AR.md`](docs/interface/PROPOSAL_AR.md)
 - **النموذج التفاعلي للواجهة:** [`docs/interface/prototype.html`](docs/interface/prototype.html)
 

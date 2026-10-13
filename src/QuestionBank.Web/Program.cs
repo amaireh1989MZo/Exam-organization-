@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Http.Features;
 using QuestionBank.Core.Data;
 using QuestionBank.Core.Export;
 using QuestionBank.Core.Extraction;
+using QuestionBank.Core.Quality;
+using QuestionBank.Core.Reports;
 using QuestionBank.Core.Review;
 using QuestionBank.Core.Inventory;
 using QuestionBank.Web.Security;
@@ -37,6 +39,8 @@ builder.Services.AddScoped<UploadService>();
 builder.Services.AddScoped<QueueProcessor>();
 builder.Services.AddScoped<ReviewService>();
 builder.Services.AddScoped<ExportService>();
+builder.Services.AddScoped<DuplicateService>();
+builder.Services.AddScoped<ExcelReportService>();
 builder.Services.AddSingleton<ExtractionSignal>();
 builder.Services.AddSingleton<InventoryCoordinator>();
 if (builder.Configuration.GetValue("QuestionBank:EnableWorker", true))
@@ -182,7 +186,7 @@ uploads.MapGet("/", async (UploadService service, ReaderRegistry readers, IOptio
     Results.Ok(new
     {
         maxFileSizeMb = options.Value.MaxFileSizeMb,
-        allowedExtensions = options.Value.AllowedExtensions,
+        allowedExtensions = options.Value.AllowZip ? options.Value.AllowedExtensions.Append("zip").ToArray() : options.Value.AllowedExtensions,
         readableExtensions = readers.SupportedExtensions,
         items = await service.ListAsync(200, ct)
     }));
@@ -198,6 +202,13 @@ uploads.MapPost("/", async (HttpRequest request, UploadService service, IOptions
         return Results.BadRequest(new { message = "لم يُرسل أي ملف." });
 
     await using var stream = file.OpenReadStream();
+    if (UploadService.IsArchive(file.FileName))
+    {
+        var archive = await service.SaveArchiveAsync(stream, file.FileName, request.HttpContext.User.Identity?.Name ?? "unknown", ct);
+        return archive.ErrorCode is not null
+            ? Results.BadRequest(new { code = archive.ErrorCode, message = archive.Message })
+            : Results.Ok(new { archive = true, items = archive.Items, skipped = archive.Skipped });
+    }
     var result = await service.SaveAsync(stream, file.FileName, form["path"].FirstOrDefault(),
         request.HttpContext.User.Identity?.Name ?? "unknown", ct);
     if (result.ErrorCode is not null)
@@ -256,6 +267,30 @@ review.MapPost("/{id:long}/flag", async (long id, HttpContext ctx, ReviewService
     ReviewResult(await service.FlagAsync(id, UserName(ctx), ct)));
 review.MapPost("/{id:long}/reopen", async (long id, HttpContext ctx, ReviewService service, CancellationToken ct) =>
     ReviewResult(await service.ReopenAsync(id, UserName(ctx), ct)));
+
+app.MapGet("/api/quality/duplicates", async (string? kind, int? skip, int? take, DuplicateService service, CancellationToken ct) =>
+{
+    var k = DuplicateKind.Exact;
+    if (!string.IsNullOrEmpty(kind) && !Enum.TryParse(kind, ignoreCase: true, out k))
+        return Results.BadRequest(new { message = "النوع يجب أن يكون Exact أو SameStem." });
+    return Results.Ok(await service.GetGroupsAsync(k, skip ?? 0, take ?? 50, ct));
+}).RequireAuthorization(AppPolicies.Review);
+
+var reports = app.MapGroup("/api/reports").RequireAuthorization(AppPolicies.ManageBank);
+
+reports.MapPost("/excel", async (HttpContext ctx, ExcelReportService service, CancellationToken ct) =>
+{
+    var result = await service.GenerateAsync(UserName(ctx), ct);
+    return result is null ? Results.Problem("مجلد النتائج غير مضبوط.", statusCode: 500) : Results.Ok(result);
+});
+
+reports.MapGet("/{fileName}", (string fileName, ExcelReportService service) =>
+{
+    var path = service.PathOf(fileName);
+    return path is null
+        ? Results.NotFound()
+        : Results.File(path, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+});
 
 var exports = app.MapGroup("/api/exports").RequireAuthorization(AppPolicies.ManageBank);
 
@@ -317,6 +352,8 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
     await db.Database.MigrateAsync();
     // WAL: قراءة لوحة الحالة لا تنتظر كتابات الجرد.
     await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
+    // بصمات التكرار للأسئلة المستخرجة قبل إضافة الميزة.
+    await scope.ServiceProvider.GetRequiredService<DuplicateService>().BackfillAsync(CancellationToken.None);
 }
 
 public partial class Program;

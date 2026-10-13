@@ -95,6 +95,8 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
                 Confidence = q.Confidence,
                 Location = q.Location,
                 IssuesJson = q.Issues.Count == 0 ? null : JsonSerializer.Serialize(q.Issues, Json),
+                StemHash = Quality.TextNormalizer.StemHash(q.Text),
+                FullHash = Quality.TextNormalizer.FullHash(q.Text, q.Options),
                 ReaderName = result.ReaderName,
                 ReaderVersion = result.ReaderVersion,
                 ExtractedAtUtc = now,

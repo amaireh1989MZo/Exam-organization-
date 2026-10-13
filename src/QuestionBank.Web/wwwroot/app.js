@@ -52,6 +52,7 @@ function show(view) {
   if (view === 'folders') { loadRoot(); loadQueue(); }
   if (view === 'drop') loadUploads();
   if (view === 'review') loadReview(true);
+  if (view === 'export') loadExport();
 }
 $$('.nav[data-view]').forEach(n => n.addEventListener('click', () => show(n.dataset.view)));
 
@@ -276,7 +277,7 @@ async function loadQueue() {
         el('b', { textContent: `${fmt(i + 1)}. ${q.relativePath || 'المجلد كاملًا'}` }),
         el('span', { className: 'chip ' + (q.status === 'Queued' ? 'wait' : 'run'), textContent: STATUS_AR[q.status] || q.status })),
       el('div', { className: 'row' },
-        el('span', { className: 'meta', textContent: `${fmt(q.fileCount)} ملف · ${q.requestedBy} · ${utc(q.requestedAtUtc)}` }),
+        el('span', { className: 'meta' }, `${fmt(q.fileCount)} ملف · `, el('bdi', { textContent: q.requestedBy }), ' · ', el('bdi', { textContent: utc(q.requestedAtUtc) })),
         remove)));
   });
 }
@@ -305,7 +306,7 @@ function uploadCard(u) {
   card.append(
     el('span', { className: 'ext', textContent: (u.extension || '?').slice(0, 4) }),
     el('span', {}, el('span', { className: 'nm', textContent: u.clientPath || u.originalName }),
-      el('br'), el('span', { className: 'meta', textContent: `${fmt(Math.ceil(u.sizeBytes / 1024))} KB · ${u.uploadedBy}` })),
+      el('br'), el('span', { className: 'meta' }, `${fmt(Math.ceil(u.sizeBytes / 1024))} KB · `, el('bdi', { textContent: u.uploadedBy }))),
     chip);
   card.dataset.id = u.id;
   if (selectedUpload === u.id) card.setAttribute('aria-current', 'true');
@@ -395,7 +396,7 @@ async function uploadAll(files) {
     try {
       const res = await uploadOne(file, path, p => { bar.firstChild.style.width = Math.round(p * 100) + '%'; });
       const replacement = uploadCard(res.upload);
-      if (res.duplicate) replacement.querySelector('.meta').textContent += ' · رُفع سابقًا بالمحتوى نفسه';
+      if (res.duplicate) replacement.querySelector('.meta').append(' · رُفع سابقًا بالمحتوى نفسه');
       card.replaceWith(replacement);
     } catch (e) {
       finish(card, chip, bar, 'bad', e.message);
@@ -566,7 +567,112 @@ document.addEventListener('keydown', e => {
   else if (key === 'f' && q && q.reviewStatus !== 'Flagged') act(q, 'flag', 'عُلّم السؤال للجنة.', () => act(q, 'reopen', null));
 });
 
+/* ---------- export basket ---------- */
+// السلة محفوظة في متصفح المستخدم فقط (راحة شخصية)، والملفات والسجل على الخادم.
+const BASKET_KEY = 'qb-basket';
+let basket = [];
+let approvedCache = new Map();
+try { basket = JSON.parse(localStorage.getItem(BASKET_KEY) || '[]').filter(Number.isInteger); } catch { basket = []; }
+function saveBasket() {
+  try { localStorage.setItem(BASKET_KEY, JSON.stringify(basket)); } catch { /* storage unavailable */ }
+  $('#n-basket').textContent = basket.length;
+}
+saveBasket();
+
+async function loadExport() {
+  let page;
+  try { page = await api('GET', '/api/review?status=Approved&take=200'); } catch { return; }
+  approvedCache = new Map(page.items.map(q => [q.id, q]));
+  basket = basket.filter(id => approvedCache.has(id));
+  saveBasket();
+  renderExport();
+  loadExportHistory();
+}
+
+function renderExport() {
+  const list = $('#ex-approved');
+  const available = [...approvedCache.values()].filter(q => !basket.includes(q.id));
+  list.replaceChildren(...available.map(q => {
+    const add = el('button', { className: 'btn sm', type: 'button', textContent: 'أضف' });
+    add.onclick = () => addToBasket(q.id);
+    const card = el('div', { className: 'excard', draggable: true },
+      el('span', {}, el('span', { className: 't', textContent: q.text }), el('br'), el('span', { className: 'm', textContent: q.source })), add);
+    card.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-qb-question', String(q.id)); e.dataTransfer.effectAllowed = 'copy'; });
+    return card;
+  }));
+  if (!available.length) list.append(el('div', { className: 'empty', textContent: approvedCache.size ? 'كل الأسئلة المعتمدة في السلة.' : 'لا توجد أسئلة معتمدة بعد. اعتمدها من شاشة المراجعة.' }));
+
+  const box = $('#ex-basket');
+  box.replaceChildren(...basket.map(id => {
+    const q = approvedCache.get(id);
+    const rm = el('button', { className: 'btn sm', type: 'button', textContent: '×' });
+    rm.setAttribute('aria-label', 'إزالة من السلة');
+    rm.onclick = () => { basket = basket.filter(x => x !== id); saveBasket(); renderExport(); };
+    return el('div', { className: 'bitem' }, el('span', { textContent: q ? q.text : '#' + id }), rm);
+  }));
+  if (!basket.length) box.append(el('div', { className: 'empty', textContent: 'أفلت الأسئلة هنا' }));
+}
+
+function addToBasket(id) {
+  if (!basket.includes(id)) { basket.push(id); saveBasket(); renderExport(); }
+}
+
+const basketBox = $('#ex-basket');
+['dragenter', 'dragover'].forEach(t => basketBox.addEventListener(t, e => {
+  if (!e.dataTransfer.types.includes('text/x-qb-question')) return;
+  e.preventDefault(); basketBox.classList.add('over');
+}));
+['dragleave', 'drop'].forEach(t => basketBox.addEventListener(t, () => basketBox.classList.remove('over')));
+basketBox.addEventListener('drop', e => {
+  const id = Number(e.dataTransfer.getData('text/x-qb-question'));
+  if (id) { e.preventDefault(); addToBasket(id); }
+});
+$('#ex-add-all').onclick = () => { approvedCache.forEach((_, id) => { if (!basket.includes(id)) basket.push(id); }); saveBasket(); renderExport(); };
+$('#ex-clear').onclick = () => {
+  const previous = [...basket];
+  basket = []; saveBasket(); renderExport();
+  toast('فُرّغت السلة.', () => { basket = previous; saveBasket(); renderExport(); });
+};
+$('#ex-gift').onclick = () => runExport('Gift');
+$('#ex-xml').onclick = () => runExport('MoodleXml');
+
+async function runExport(format) {
+  const box = $('#ex-result');
+  box.replaceChildren();
+  if (!basket.length) { toast('السلة فارغة.'); return; }
+  try {
+    const r = await api('POST', '/api/exports', {
+      format, questionIds: basket, allowShuffle: $('#ex-shuffle').checked, categoryBySource: $('#ex-cat').checked
+    });
+    const link = el('a', { href: `/api/exports/${r.exportId}/file`, textContent: 'تنزيل الملف' });
+    // bdi: أسماء الملفات والحسابات لاتينية، فنعزل اتجاهها حتى لا تنقلب داخل النص العربي.
+    const res = el('div', { className: 'result' }, `صُدّر ${fmt(r.exported)} سؤال إلى `, el('bdi', { textContent: r.fileName }), '. ', link);
+    if (r.rejected.length) res.append(el('div', { textContent: `استُبعد ${fmt(r.rejected.length)}: ` + r.rejected.map(x => `#${x.questionId} (${x.reason})`).join('، ') }));
+    box.append(res);
+    loadExportHistory();
+  } catch (e) {
+    box.append(el('div', { className: 'result bad', textContent: e.message }));
+  }
+}
+
+async function loadExportHistory() {
+  let items;
+  try { items = await api('GET', '/api/exports'); } catch { return; }
+  const box = $('#ex-history');
+  if (!items.length) { box.className = 'muted'; box.textContent = 'لا توجد بعد.'; return; }
+  box.className = 'hist';
+  box.replaceChildren();
+  for (const x of items) {
+    box.append(
+      el('span', { className: 'mono', textContent: '#' + x.id }),
+      el('span', { textContent: x.format === 'Gift' ? 'GIFT' : 'Moodle XML' }),
+      el('span', { textContent: `${fmt(x.questionCount)} سؤال` }),
+      el('span', { className: 'muted' }, el('bdi', { textContent: x.requestedBy }), ' · ', el('bdi', { textContent: utc(x.atUtc) })),
+      el('a', { href: `/api/exports/${x.id}/file`, textContent: 'تنزيل' }));
+  }
+}
+
 /* ---------- start ---------- */
 loadMe();
 loadQueue();
-show(['dash', 'folders', 'drop', 'review'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');
+show(['dash', 'folders', 'drop', 'review', 'export'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');

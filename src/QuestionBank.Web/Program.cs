@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http.Features;
 using QuestionBank.Core.Data;
+using QuestionBank.Core.Export;
 using QuestionBank.Core.Extraction;
 using QuestionBank.Core.Review;
 using QuestionBank.Core.Inventory;
@@ -35,6 +36,7 @@ builder.Services.AddScoped<ExtractionService>();
 builder.Services.AddScoped<UploadService>();
 builder.Services.AddScoped<QueueProcessor>();
 builder.Services.AddScoped<ReviewService>();
+builder.Services.AddScoped<ExportService>();
 builder.Services.AddSingleton<ExtractionSignal>();
 builder.Services.AddSingleton<InventoryCoordinator>();
 if (builder.Configuration.GetValue("QuestionBank:EnableWorker", true))
@@ -48,7 +50,10 @@ builder.Services.AddAppAuthorization(builder.Configuration);
 
 // نص عربي مقروء في JSON بدل \uXXXX.
 builder.Services.ConfigureHttpJsonOptions(o =>
-    o.SerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All));
+{
+    o.SerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All);
+    o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
 builder.Services.AddProblemDetails();
 
 var app = builder.Build();
@@ -252,6 +257,41 @@ review.MapPost("/{id:long}/flag", async (long id, HttpContext ctx, ReviewService
 review.MapPost("/{id:long}/reopen", async (long id, HttpContext ctx, ReviewService service, CancellationToken ct) =>
     ReviewResult(await service.ReopenAsync(id, UserName(ctx), ct)));
 
+var exports = app.MapGroup("/api/exports").RequireAuthorization(AppPolicies.ManageBank);
+
+exports.MapGet("/", async (ExportService service, CancellationToken ct) => Results.Ok(await service.ListAsync(ct)));
+
+exports.MapPost("/", async (ExportRequestDto request, HttpContext ctx, ExportService service, CancellationToken ct) =>
+{
+    if (!Enum.TryParse<ExportFormat>(request.Format, ignoreCase: true, out var format))
+        return Results.BadRequest(new { message = "الصيغة يجب أن تكون Gift أو MoodleXml." });
+    var result = await service.ExportAsync(
+        new ExportRequest(format, request.QuestionIds ?? [], request.AllowShuffle, request.CategoryBySource), UserName(ctx), ct);
+    return result.ErrorCode switch
+    {
+        null => Results.Ok(result),
+        "VerificationFailed" => Results.Problem("فشل الفحص الذاتي للملف قبل حفظه، ولم يُحفظ.", statusCode: 500),
+        "OutputUnavailable" => Results.Problem("مجلد النتائج غير مضبوط.", statusCode: 500),
+        _ => Results.BadRequest(new
+        {
+            code = result.ErrorCode,
+            message = result.ErrorCode switch
+            {
+                "Empty" => "السلة فارغة.",
+                "TooMany" => $"الحد الأقصى {ExportService.MaxQuestionsPerExport} سؤال في الملف الواحد.",
+                _ => "لا يوجد في السلة سؤال صالح للتصدير."
+            },
+            rejected = result.Rejected
+        })
+    };
+});
+
+exports.MapGet("/{id:long}/file", async (long id, ExportService service, CancellationToken ct) =>
+{
+    var file = await service.GetFileAsync(id, ct);
+    return file is null ? Results.NotFound() : Results.File(file.Value.Path, file.Value.ContentType, file.Value.FileName);
+});
+
 app.Run();
 
 static string UserName(HttpContext ctx) => ctx.User.Identity?.Name ?? "unknown";
@@ -284,6 +324,8 @@ public partial class Program;
 public sealed record EnqueueRequest(string? Path);
 
 public sealed record AnswerRequest(int? Index);
+
+public sealed record ExportRequestDto(string Format, long[]? QuestionIds, bool AllowShuffle, bool CategoryBySource);
 
 /// <summary>الترويسة المطلوبة في كل طلب يغيّر شيئًا (حماية CSRF).</summary>
 public static class ClientHeader

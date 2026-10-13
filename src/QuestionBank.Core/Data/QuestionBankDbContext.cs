@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using QuestionBank.Core.Export;
 using QuestionBank.Core.Extraction;
 using QuestionBank.Core.Inventory;
 using QuestionBank.Core.Review;
@@ -14,6 +15,7 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<Question> Questions => Set<Question>();
     public DbSet<Upload> Uploads => Set<Upload>();
     public DbSet<AuditEntry> AuditLog => Set<AuditEntry>();
+    public DbSet<ExportRecord> Exports => Set<ExportRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -101,6 +103,13 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.NewValue).HasMaxLength(200);
             e.HasIndex(x => new { x.EntityType, x.EntityId });
             e.HasIndex(x => x.AtUtc);
+        });
+
+        modelBuilder.Entity<ExportRecord>(e =>
+        {
+            e.Property(x => x.Format).HasConversion<string>().HasMaxLength(16);
+            e.Property(x => x.RequestedBy).HasMaxLength(256).IsRequired();
+            e.Property(x => x.FileName).HasMaxLength(128).IsRequired();
         });
     }
 }

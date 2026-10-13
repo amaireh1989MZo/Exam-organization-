@@ -15,7 +15,7 @@
     <button class="nav" data-view="drop" type="button">إسقاط الملفات</button>
     <button class="nav" data-view="review" type="button">المراجعة <span class="n" id="n-review">0</span></button>
     <span class="nav soon" aria-disabled="true">التصنيف <small>قريبًا</small></span>
-    <span class="nav soon" aria-disabled="true">سلة التصدير <small>قريبًا</small></span>
+    <button class="nav" data-view="export" type="button">سلة التصدير <span class="n" id="n-basket">0</span></button>
     <div class="who"><b id="who-name">…</b><span id="who-roles"></span></div>
   </nav>
 
@@ -95,6 +95,38 @@
           <div class="actions" style="margin-top:8px"><button class="btn sm" id="rv-more" type="button" hidden>عرض المزيد</button></div>
         </div>
         <div class="panel" id="rv-detail"><div class="muted">لا توجد أسئلة في هذه القائمة.</div></div>
+      </div>
+    </section>
+
+    <!-- سلة التصدير -->
+    <section data-screen="export" hidden>
+      <div class="head">
+        <div><h1>سلة التصدير</h1><p class="sub">اسحب الأسئلة المعتمدة إلى السلة، أو اضغط «أضف». قبل حفظ الملف يُعاد قراءته ويُقارن بالأصل، والملف الذي لا يجتاز الفحص لا يُحفظ.</p></div>
+      </div>
+      <div class="grid g2 align-start">
+        <div class="panel">
+          <h2>أسئلة معتمدة</h2>
+          <div class="actions" style="margin-bottom:8px"><button class="btn sm" id="ex-add-all" type="button">أضف الكل</button></div>
+          <div class="qlist" id="ex-approved"></div>
+        </div>
+        <div class="panel">
+          <h2>السلة</h2>
+          <div class="queue basket" id="ex-basket" aria-label="سلة التصدير. أفلت الأسئلة هنا"></div>
+          <div class="opts-x">
+            <label><input type="checkbox" id="ex-cat" checked> فئة في Moodle لكل مجلد مصدر</label>
+            <label><input type="checkbox" id="ex-shuffle"> السماح لـ Moodle بخلط الخيارات</label>
+          </div>
+          <div class="actions" style="margin-top:12px">
+            <button class="btn primary" id="ex-gift" type="button">تصدير GIFT</button>
+            <button class="btn primary" id="ex-xml" type="button">تصدير Moodle XML</button>
+            <button class="btn" id="ex-clear" type="button">تفريغ السلة</button>
+          </div>
+          <div id="ex-result"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>عمليات التصدير السابقة</h2>
+        <div id="ex-history" class="muted">لا توجد بعد.</div>
       </div>
     </section>
 

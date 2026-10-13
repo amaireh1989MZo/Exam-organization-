@@ -186,6 +186,14 @@ public sealed class SecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task AppStarts_WithOllamaProvider_AndServesFrameworkEndpoints()
+    {
+        var client = Client(testAuth: true, settings: new() { ["QuestionBank:Ai:Provider"] = "ollama" });
+        client.DefaultRequestHeaders.Add(TestAuthHandler.GroupsHeader, "CORP\\QB-Reviewers");
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/frameworks")).StatusCode);
+    }
+
+    [Fact]
     public async Task ConfigPaths_NeverRevealsThePathsThemselves()
     {
         var client = Client(testAuth: true);

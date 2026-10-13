@@ -43,7 +43,18 @@ builder.Services.AddScoped<ExportService>();
 builder.Services.AddScoped<DuplicateService>();
 builder.Services.AddScoped<ExcelReportService>();
 builder.Services.AddScoped<ColumnTemplateService>();
-builder.Services.AddSingleton<IIndicatorSuggester, LexicalSuggester>();
+builder.Services.AddOptions<AiOptions>().Bind(builder.Configuration.GetSection(AiOptions.SectionName)).ValidateDataAnnotations();
+builder.Services.AddSingleton<LexicalSuggester>();
+// الاقتراحات: نصية افتراضيًا، أو نموذج تضمين محلي عبر Ollama إذا ضُبط Provider=ollama بعنوان داخلي.
+if (string.Equals(builder.Configuration["QuestionBank:Ai:Provider"], "ollama", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddHttpClient<EmbeddingSuggester>();
+    builder.Services.AddSingleton<IIndicatorSuggester>(sp => sp.GetRequiredService<EmbeddingSuggester>());
+}
+else
+{
+    builder.Services.AddSingleton<IIndicatorSuggester>(sp => sp.GetRequiredService<LexicalSuggester>());
+}
 builder.Services.AddScoped<FrameworkService>();
 builder.Services.AddSingleton<ExtractionSignal>();
 builder.Services.AddSingleton<InventoryCoordinator>();

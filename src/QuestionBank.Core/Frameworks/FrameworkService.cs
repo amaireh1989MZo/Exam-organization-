@@ -17,6 +17,12 @@ public sealed class LexicalSuggester : IIndicatorSuggester
     public string Method => "lexical";
     public const double MinScore = 0.08;
 
+    public Task<IReadOnlyList<IReadOnlyList<IndicatorSuggestion>>> SuggestManyAsync(
+        IReadOnlyList<(string Text, IReadOnlyList<string> Options)> questions, IReadOnlyList<CompetencyIndicator> indicators,
+        int top, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<IReadOnlyList<IndicatorSuggestion>>>(
+            questions.Select(q => Suggest(q.Text, q.Options, indicators, top)).ToList());
+
     public IReadOnlyList<IndicatorSuggestion> Suggest(string questionText, IReadOnlyList<string> options, IReadOnlyList<CompetencyIndicator> indicators, int top)
     {
         if (indicators.Count == 0)
@@ -188,12 +194,10 @@ public sealed class FrameworkService(QuestionBankDbContext db, IIndicatorSuggest
                 File = db.SourceFiles.Where(f => f.Id == q.SourceFileId).Select(f => f.RelativePath).FirstOrDefault(),
                 Upload = db.Uploads.Where(u => u.Id == q.UploadId).Select(u => u.ClientPath ?? u.OriginalName).FirstOrDefault()
             }).ToListAsync(cancellationToken);
-        return rows.Select(r =>
-        {
-            var options = JsonSerializer.Deserialize<string[]>(r.OriginalOptionsJson) ?? [];
-            return new ClassifyItem(r.Id, r.OriginalText, options, r.File ?? ("رفع يدوي/" + r.Upload), r.ReviewStatus.ToString(),
-                suggester.Suggest(r.OriginalText, options, indicators, 3));
-        }).ToList();
+        var parsed = rows.Select(r => (Row: r, Options: (IReadOnlyList<string>)(JsonSerializer.Deserialize<string[]>(r.OriginalOptionsJson) ?? []))).ToList();
+        var suggestions = await suggester.SuggestManyAsync(parsed.Select(p => (p.Row.OriginalText, p.Options)).ToList(), indicators, 3, cancellationToken);
+        return parsed.Select((p, i) => new ClassifyItem(p.Row.Id, p.Row.OriginalText, p.Options,
+            p.Row.File ?? ("رفع يدوي/" + p.Row.Upload), p.Row.ReviewStatus.ToString(), suggestions[i])).ToList();
     }
 
     /// <summary>يربط السؤال بمؤشر موجود فعلًا في إطار مستورد، أو يلغي الربط (indicatorId = null). كل ربط يُسجَّل.</summary>
@@ -211,7 +215,7 @@ public sealed class FrameworkService(QuestionBankDbContext db, IIndicatorSuggest
         }
 
         // الطريقة من قائمة معروفة فقط: يدوي، أو اختيار اقتراح من مزوّد الاقتراحات الحالي.
-        method = method == suggester.Method ? method : "manual";
+        method = method == suggester.Method || method == "lexical" ? method : "manual";
         var old = q.IndicatorId;
         var now = time.GetUtcNow().UtcDateTime;
         q.IndicatorId = indicator?.Id;

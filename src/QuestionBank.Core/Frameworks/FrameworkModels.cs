@@ -45,5 +45,9 @@ public sealed record IndicatorSuggestion(long IndicatorId, string? Code, string 
 public interface IIndicatorSuggester
 {
     string Method { get; }
-    IReadOnlyList<IndicatorSuggestion> Suggest(string questionText, IReadOnlyList<string> options, IReadOnlyList<CompetencyIndicator> indicators, int top);
+
+    /// <summary>اقتراحات لعدة أسئلة دفعة واحدة (النموذج المحلي يعالج الدفعات أسرع).</summary>
+    Task<IReadOnlyList<IReadOnlyList<IndicatorSuggestion>>> SuggestManyAsync(
+        IReadOnlyList<(string Text, IReadOnlyList<string> Options)> questions, IReadOnlyList<CompetencyIndicator> indicators,
+        int top, CancellationToken cancellationToken);
 }

@@ -66,7 +66,8 @@ public sealed class ExportService(
             .Where(q => ids.Contains(q.Id))
             .Select(q => new
             {
-                q.Id, q.StableKey, q.OriginalCode, q.OriginalText, q.OriginalOptionsJson, q.OriginalCorrectIndex, q.CorrectedIndex,
+                q.Id, q.StableKey, q.OriginalCode, OriginalText = q.CorrectedText ?? q.OriginalText,
+                OriginalOptionsJson = q.CorrectedOptionsJson ?? q.OriginalOptionsJson, q.OriginalCorrectIndex, q.CorrectedIndex,
                 q.ReviewStatus, q.Location,
                 Indicator = db.Indicators.Where(i => i.Id == q.IndicatorId)
                     .Select(i => new { i.Code, i.Name, i.MainDomain, i.SubDomain, F = db.Frameworks.Where(f => f.Id == i.FrameworkId).Select(f => f.Name + " " + f.Version).FirstOrDefault() })

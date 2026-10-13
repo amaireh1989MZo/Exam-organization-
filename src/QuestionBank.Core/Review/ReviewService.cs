@@ -27,6 +27,8 @@ public static class AuditActions
     public const string Approve = "Approve";
     public const string Flag = "Flag";
     public const string Reopen = "Reopen";
+    public const string SetText = "SetText";
+    public const string RevertText = "RevertText";
 }
 
 public enum ReviewOutcome
@@ -35,14 +37,17 @@ public enum ReviewOutcome
     NotFound,
     InvalidOption,
     NoAnswer,
-    NotAllowedInStatus
+    NotAllowedInStatus,
+    InvalidText
 }
 
+/// <summary>Text وOptions هما النص الفعّال (المصحّح إن وُجد)؛ الأصل في OriginalText وOriginalOptions.</summary>
 public sealed record ReviewItem(
     long Id, string StableKey, int Order, string? Code, string Text, IReadOnlyList<string> Options,
     int? OriginalCorrectIndex, int? CorrectedIndex, int? EffectiveCorrectIndex,
     string Detector, string Confidence, string Location, IReadOnlyList<string> Issues,
-    string ReviewStatus, string Source, string? ReviewedBy, DateTime? ReviewedAtUtc);
+    string ReviewStatus, string Source, string? ReviewedBy, DateTime? ReviewedAtUtc,
+    bool TextCorrected = false, string? OriginalText = null, IReadOnlyList<string>? OriginalOptions = null);
 
 public sealed record ReviewPage(IReadOnlyDictionary<string, int> Counts, int Total, IReadOnlyList<ReviewItem> Items);
 
@@ -94,6 +99,40 @@ public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
             q.CorrectedIndex = index == q.OriginalCorrectIndex ? null : index;
             var action = index is null ? AuditActions.RevertAnswer : AuditActions.SetAnswer;
             return (ReviewOutcome.Ok, action, Effective(old, q.OriginalCorrectIndex)?.ToString(), Effective(q.CorrectedIndex, q.OriginalCorrectIndex)?.ToString());
+        });
+
+    /// <summary>
+    /// يصحح نص السؤال والخيارات كطبقة فوق الأصل. عدد الخيارات وترتيبها ثابتان (الإجابة مرتبطة بموقعها).
+    /// تمرير null لكليهما يلغي التصحيح. السجل يذكر الحقول المعدّلة فقط وليس النص.
+    /// </summary>
+    public Task<ReviewOutcome> SetTextAsync(long questionId, string? text, IReadOnlyList<string>? options, string user, CancellationToken cancellationToken) =>
+        MutateAsync(questionId, user, cancellationToken, q =>
+        {
+            if (q.ReviewStatus is QuestionReviewStatus.Approved or QuestionReviewStatus.Superseded)
+                return (ReviewOutcome.NotAllowedInStatus, null, null, null);
+            var original = JsonSerializer.Deserialize<string[]>(q.OriginalOptionsJson) ?? [];
+            if (text is null && options is null)
+            {
+                if (q.CorrectedText is null && q.CorrectedOptionsJson is null)
+                    return (ReviewOutcome.Ok, null, null, null);
+                q.CorrectedText = null;
+                q.CorrectedOptionsJson = null;
+                return (ReviewOutcome.Ok, AuditActions.RevertText, null, "original");
+            }
+
+            var newText = (text ?? q.EffectiveText).Trim();
+            var newOptions = (options ?? JsonSerializer.Deserialize<string[]>(q.EffectiveOptionsJson) ?? []).Select(o => (o ?? "").Trim()).ToArray();
+            if (newText.Length == 0 || newText.Length > 10_000 || newOptions.Length != original.Length
+                || newOptions.Any(o => o.Length == 0 || o.Length > 2_000))
+                return (ReviewOutcome.InvalidText, null, null, null);
+
+            var changed = new List<string>();
+            if (newText != q.OriginalText) changed.Add("text");
+            changed.AddRange(newOptions.Select((o, i) => o != original[i] ? $"option{i + 1}" : null).OfType<string>());
+            q.CorrectedText = newText == q.OriginalText ? null : newText;
+            q.CorrectedOptionsJson = newOptions.SequenceEqual(original) ? null : JsonSerializer.Serialize(newOptions, Extraction.ExtractionService.Json);
+            return (ReviewOutcome.Ok, changed.Count == 0 ? AuditActions.RevertText : AuditActions.SetText, null,
+                changed.Count == 0 ? "original" : string.Join(",", changed));
         });
 
     public Task<ReviewOutcome> ApproveAsync(long questionId, string user, CancellationToken cancellationToken) =>
@@ -172,11 +211,17 @@ public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
 
     private static int? Effective(int? corrected, int? original) => corrected ?? original;
 
-    private static ReviewItem ToItem(Question q, string source) => new(
-        q.Id, q.StableKey, q.OriginalOrder, q.OriginalCode, q.OriginalText,
-        JsonSerializer.Deserialize<string[]>(q.OriginalOptionsJson) ?? [],
-        q.OriginalCorrectIndex, q.CorrectedIndex, Effective(q.CorrectedIndex, q.OriginalCorrectIndex),
-        q.AnswerDetector, q.Confidence.ToString(), q.Location,
-        q.IssuesJson is null ? [] : JsonSerializer.Deserialize<string[]>(q.IssuesJson) ?? [],
-        q.ReviewStatus.ToString(), source, q.ReviewedBy, q.ReviewedAtUtc);
+    private static ReviewItem ToItem(Question q, string source)
+    {
+        var corrected = q.CorrectedText is not null || q.CorrectedOptionsJson is not null;
+        return new(
+            q.Id, q.StableKey, q.OriginalOrder, q.OriginalCode, q.EffectiveText,
+            JsonSerializer.Deserialize<string[]>(q.EffectiveOptionsJson) ?? [],
+            q.OriginalCorrectIndex, q.CorrectedIndex, Effective(q.CorrectedIndex, q.OriginalCorrectIndex),
+            q.AnswerDetector, q.Confidence.ToString(), q.Location,
+            q.IssuesJson is null ? [] : JsonSerializer.Deserialize<string[]>(q.IssuesJson) ?? [],
+            q.ReviewStatus.ToString(), source, q.ReviewedBy, q.ReviewedAtUtc,
+            corrected, corrected ? q.OriginalText : null,
+            corrected ? JsonSerializer.Deserialize<string[]>(q.OriginalOptionsJson) : null);
+    }
 }

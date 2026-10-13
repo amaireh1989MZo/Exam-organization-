@@ -292,6 +292,8 @@ review.MapGet("/{id:long}/history", async (long id, ReviewService service, Cance
 
 review.MapPost("/{id:long}/answer", async (long id, AnswerRequest request, HttpContext ctx, ReviewService service, CancellationToken ct) =>
     ReviewResult(await service.SetAnswerAsync(id, request.Index, UserName(ctx), ct)));
+review.MapPost("/{id:long}/text", async (long id, TextRequest request, HttpContext ctx, ReviewService service, CancellationToken ct) =>
+    ReviewResult(await service.SetTextAsync(id, request.Text, request.Options, UserName(ctx), ct)));
 review.MapPost("/{id:long}/approve", async (long id, HttpContext ctx, ReviewService service, CancellationToken ct) =>
     ReviewResult(await service.ApproveAsync(id, UserName(ctx), ct)));
 review.MapPost("/{id:long}/flag", async (long id, HttpContext ctx, ReviewService service, CancellationToken ct) =>
@@ -408,6 +410,7 @@ static IResult ReviewResult(ReviewOutcome outcome) => outcome switch
     ReviewOutcome.NotFound => Results.NotFound(),
     ReviewOutcome.InvalidOption => Results.BadRequest(new { message = "رقم الخيار غير صحيح." }),
     ReviewOutcome.NoAnswer => Results.BadRequest(new { message = "حدّد الإجابة الصحيحة قبل الاعتماد." }),
+    ReviewOutcome.InvalidText => Results.BadRequest(new { message = "النص والخيارات لا يجوز أن تكون فارغة، وعدد الخيارات ثابت." }),
     _ => Results.Conflict(new { message = "أعد فتح السؤال المعتمد قبل تعديل إجابته." })
 };
 
@@ -416,6 +419,8 @@ public partial class Program;
 public sealed record EnqueueRequest(string? Path);
 
 public sealed record AnswerRequest(int? Index);
+
+public sealed record TextRequest(string? Text, string[]? Options);
 
 public sealed record ClassifyRequest(long? IndicatorId, string? Method, double? Score);
 

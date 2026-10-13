@@ -178,3 +178,98 @@ public sealed class ReviewServiceTests : IDisposable
         Assert.Equal(all.Count + 2 - 1, await check.Questions.CountAsync());
     }
 }
+
+public sealed class TextCorrectionTests : IDisposable
+{
+    private readonly InventoryTestKit _kit = new();
+
+    public void Dispose() => _kit.Dispose();
+
+    private const string Txt = "1. ما عاصمة الاردن؟؟\nأ) إربد\n*ب) عمـان\nج) الزرقاء\n";
+
+    private async Task<long> SeedAsync()
+    {
+        _kit.WriteFile("أ.txt", Txt);
+        await _kit.ScanAsync();
+        await using var db = _kit.CreateDb();
+        var file = await db.SourceFiles.SingleAsync();
+        await new ExtractionService(db, ReaderRegistry.Default(), _kit.Time).ExtractAsync(Encoding.UTF8.GetBytes(Txt), "txt", file.Id, null, CancellationToken.None);
+        return await db.Questions.Select(q => q.Id).SingleAsync();
+    }
+
+    [Fact]
+    public async Task TextCorrection_KeepsOriginal_IsShownAsEffective_AndAuditsFieldNamesOnly()
+    {
+        var id = await SeedAsync();
+        await using var db = _kit.CreateDb();
+        var svc = new ReviewService(db, _kit.Time);
+
+        Assert.Equal(ReviewOutcome.Ok, await svc.SetTextAsync(id, "ما عاصمة الأردن؟", ["إربد", "عمّان", "الزرقاء"], "CORP\\r", CancellationToken.None));
+
+        var q = await db.Questions.AsNoTracking().SingleAsync();
+        Assert.Equal("ما عاصمة الاردن؟؟", q.OriginalText);
+        Assert.Equal("ما عاصمة الأردن؟", q.CorrectedText);
+        var item = (await svc.ListAsync(null, 0, 10, CancellationToken.None)).Items.Single();
+        Assert.True(item.TextCorrected);
+        Assert.Equal("ما عاصمة الأردن؟", item.Text);
+        Assert.Equal("عمّان", item.Options[1]);
+        Assert.Equal("ما عاصمة الاردن؟؟", item.OriginalText);
+        var audit = (await svc.HistoryAsync(id, CancellationToken.None)).Single();
+        Assert.Equal((AuditActions.SetText, "text,option2"), (audit.Action, audit.NewValue));
+    }
+
+    [Fact]
+    public async Task InvalidCorrections_AreRejected()
+    {
+        var id = await SeedAsync();
+        await using var db = _kit.CreateDb();
+        var svc = new ReviewService(db, _kit.Time);
+
+        Assert.Equal(ReviewOutcome.InvalidText, await svc.SetTextAsync(id, "  ", null, "u", CancellationToken.None));
+        Assert.Equal(ReviewOutcome.InvalidText, await svc.SetTextAsync(id, null, ["أ", "ب"], "u", CancellationToken.None));
+        Assert.Equal(ReviewOutcome.InvalidText, await svc.SetTextAsync(id, null, ["أ", "", "ج"], "u", CancellationToken.None));
+        await svc.ApproveAsync(id, "u", CancellationToken.None);
+        Assert.Equal(ReviewOutcome.NotAllowedInStatus, await svc.SetTextAsync(id, "نص", null, "u", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RevertingOrSettingTheOriginal_RemovesTheCorrection()
+    {
+        var id = await SeedAsync();
+        await using var db = _kit.CreateDb();
+        var svc = new ReviewService(db, _kit.Time);
+        await svc.SetTextAsync(id, "نص معدّل؟", null, "u", CancellationToken.None);
+
+        await svc.SetTextAsync(id, "ما عاصمة الاردن؟؟", null, "u", CancellationToken.None);
+        Assert.Null((await db.Questions.AsNoTracking().SingleAsync()).CorrectedText);
+
+        await svc.SetTextAsync(id, "نص معدّل؟", null, "u", CancellationToken.None);
+        await svc.SetTextAsync(id, null, null, "u", CancellationToken.None);
+        var q = await db.Questions.AsNoTracking().SingleAsync();
+        Assert.Null(q.CorrectedText);
+        Assert.Null(q.CorrectedOptionsJson);
+        Assert.Equal(AuditActions.RevertText, (await svc.HistoryAsync(id, CancellationToken.None)).Last().Action);
+    }
+
+    [Fact]
+    public async Task Export_UsesCorrectedText()
+    {
+        var id = await SeedAsync();
+        await using (var db = _kit.CreateDb())
+        {
+            var svc = new ReviewService(db, _kit.Time);
+            await svc.SetTextAsync(id, "ما عاصمة الأردن؟", ["إربد", "عمّان", "الزرقاء"], "u", CancellationToken.None);
+            await svc.ApproveAsync(id, "u", CancellationToken.None);
+        }
+        _kit.Options.SourceRoot = _kit.SourceRoot;
+        _kit.Options.OutputRoot = _kit.OutputRoot;
+        await using var db2 = _kit.CreateDb();
+        var result = await new QuestionBank.Core.Export.ExportService(db2, Microsoft.Extensions.Options.Options.Create(_kit.Options), _kit.Time)
+            .ExportAsync(new QuestionBank.Core.Export.ExportRequest(QuestionBank.Core.Export.ExportFormat.Gift, [id], false, false), "u", CancellationToken.None);
+
+        var parsed = new GiftReader().Read(File.ReadAllBytes(Path.Combine(_kit.OutputRoot, "exports", result.FileName!))).Questions.Single();
+        Assert.Equal("ما عاصمة الأردن؟", parsed.Text);
+        Assert.Equal("عمّان", parsed.Options[1]);
+        Assert.Equal(1, parsed.CorrectIndex);
+    }
+}

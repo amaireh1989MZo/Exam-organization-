@@ -133,6 +133,12 @@ namespace QuestionBank.Core.Data.Migrations
                     b.Property<int?>("CorrectedIndex")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("CorrectedOptionsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrectedText")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("ExtractedAtUtc")
                         .HasColumnType("TEXT");
 

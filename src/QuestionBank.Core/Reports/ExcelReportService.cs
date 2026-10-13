@@ -121,7 +121,7 @@ public sealed class ExcelReportService(QuestionBankDbContext db, IOptions<Invent
     {
         Header(w, "المعرّف", "المعرّف الثابت", "المصدر", "الموقع", "الترتيب", "الرمز", "نص السؤال", "الخيارات",
             "إجابة الملف", "الإجابة المصحّحة", "الإجابة الفعّالة", "نص الإجابة الفعّالة", "طريقة الكشف", "الثقة",
-            "حالة المراجعة", "ملاحظات", "راجعه", "القارئ");
+            "حالة المراجعة", "ملاحظات", "راجعه", "القارئ", "النص المصحّح", "الخيارات المصحّحة");
         var files = await db.SourceFiles.AsNoTracking().Select(f => new { f.Id, f.RelativePath }).ToDictionaryAsync(f => f.Id, f => f.RelativePath, ct);
         var uploads = await db.Uploads.AsNoTracking().Select(u => new { u.Id, Name = u.ClientPath ?? u.OriginalName }).ToDictionaryAsync(u => u.Id, u => u.Name, ct);
         var n = 0;
@@ -135,7 +135,9 @@ public sealed class ExcelReportService(QuestionBankDbContext db, IOptions<Invent
                 string.Join(" | ", options.Select((o, i) => $"{Letter(i)}) {o}")),
                 Letter(q.OriginalCorrectIndex), Letter(q.CorrectedIndex), Letter(effective),
                 effective is { } e && e < options.Length ? options[e] : "",
-                q.AnswerDetector, q.Confidence.ToString(), q.ReviewStatus.ToString(), issues, q.ReviewedBy ?? "", $"{q.ReaderName} {q.ReaderVersion}");
+                q.AnswerDetector, q.Confidence.ToString(), q.ReviewStatus.ToString(), issues, q.ReviewedBy ?? "", $"{q.ReaderName} {q.ReaderVersion}",
+                q.CorrectedText ?? "",
+                q.CorrectedOptionsJson is null ? "" : string.Join(" | ", (JsonSerializer.Deserialize<string[]>(q.CorrectedOptionsJson) ?? []).Select((o, i) => $"{Letter(i)}) {o}")));
             n++;
         }
         return n;

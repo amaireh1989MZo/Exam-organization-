@@ -634,9 +634,16 @@ function renderDetail(q) {
 
   const issues = [...q.issues];
   if (q.correctedIndex !== null) issues.unshift(`صُحّحت الإجابة يدويًا${q.reviewedBy ? ' بواسطة ' + q.reviewedBy : ''}.`);
+  if (q.textCorrected) issues.unshift('صُحّح النص يدويًا؛ النص الأصلي محفوظ ويظهر أدناه.');
   if (!issues.length) box.append(el('div', { className: 'issue' }, el('span', { className: 'dot g' }), 'البنية سليمة: نص وخيارات وإجابة واحدة'));
   issues.forEach(t => box.append(el('div', { className: 'issue' }, el('span', { className: 'dot ' + (q.effectiveCorrectIndex === null ? 'r' : 'y') }), t)));
   box.append(el('div', { className: 'srcline', textContent: `${q.source} · ${q.location} · ${CONF_AR[q.confidence]} · طريقة كشف الإجابة: ${q.detector}` }));
+  if (q.textCorrected) {
+    const orig = el('details', { className: 'srcline' }, el('summary', { textContent: 'النص كما ورد في الملف' }),
+      el('div', { textContent: q.originalText, style: 'white-space:pre-wrap;margin-top:4px' }),
+      el('ol', {}, ...q.originalOptions.map(o => el('li', { textContent: o }))));
+    box.append(orig);
+  }
 
   const actions = el('div', { className: 'actions', style: 'margin-top:14px' });
   if (q.reviewStatus === 'Approved' || q.reviewStatus === 'Flagged') {
@@ -645,10 +652,42 @@ function renderDetail(q) {
   if (!locked) {
     actions.append(button('اعتماد', () => act(q, 'approve', 'اعتُمد السؤال.', () => act(q, 'reopen', null)), 'primary', 'A'));
     if (q.reviewStatus !== 'Flagged') actions.append(button('تعليم للجنة', () => act(q, 'flag', 'عُلّم السؤال للجنة.', () => act(q, 'reopen', null)), '', 'F'));
-    if (q.correctedIndex !== null) actions.append(button('إلغاء التصحيح', () => setAnswer(q, null)));
+    if (q.correctedIndex !== null) actions.append(button('إلغاء تصحيح الإجابة', () => setAnswer(q, null)));
+    actions.append(button('تعديل النص', () => editText(q)));
+    if (q.textCorrected) actions.append(button('إعادة النص الأصلي', () => saveText(q, null, null)));
   }
   actions.append(button('التالي', () => moveReview(1), '', 'J'));
   box.append(actions);
+}
+
+/* تعديل النص والخيارات كطبقة فوق الأصل: عدد الخيارات ثابت لأن الإجابة مرتبطة بموقعها. */
+function editText(q) {
+  const box = $('#rv-detail');
+  box.replaceChildren(el('h2', { textContent: 'تعديل النص', style: 'font-size:16px' }),
+    el('p', { className: 'note', textContent: 'صحّح أخطاء الاستخراج فقط (كلمة مكسورة، حرف ناقص). النص الأصلي يبقى محفوظًا، والتصدير يستخدم النص المصحّح.' }));
+  const stem = el('textarea', { id: 'edit-stem', value: q.text, rows: 3, style: 'width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg)' });
+  box.append(el('label', { className: 'field', style: 'display:block' }, 'نص السؤال:', stem));
+  const inputs = q.options.map((o, i) => {
+    const input = el('input', { id: `edit-opt-${i}`, value: o, style: 'flex:1;min-width:0' });
+    box.append(el('label', { className: 'field' }, el('span', { className: 'mono', textContent: (LETTERS[i] || i + 1) + ')' }), input));
+    return input;
+  });
+  const save = el('button', { className: 'btn primary', type: 'button', textContent: 'حفظ التصحيح' });
+  save.onclick = () => saveText(q, stem.value, inputs.map(x => x.value));
+  const cancel = el('button', { className: 'btn', type: 'button', textContent: 'إلغاء' });
+  cancel.onclick = () => renderDetail(q);
+  box.append(el('div', { className: 'actions', style: 'margin-top:12px' }, save, cancel));
+  stem.focus();
+}
+
+async function saveText(q, text, options) {
+  const before = q.textCorrected ? { text: q.text, options: q.options } : { text: null, options: null };
+  try {
+    await api('POST', `/api/review/${q.id}/text`, { text, options });
+    toast(text === null ? 'أُعيد النص الأصلي.' : 'حُفظ تصحيح النص.',
+      () => api('POST', `/api/review/${q.id}/text`, before).then(reloadKeepingPosition));
+    await reloadKeepingPosition();
+  } catch (e) { toast(e.message); }
 }
 
 function button(text, onclick, cls = '', key = '') {

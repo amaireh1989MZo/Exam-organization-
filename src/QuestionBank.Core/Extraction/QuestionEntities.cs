@@ -53,6 +53,15 @@ public sealed class Question
     public string? ReviewedBy { get; set; }
     public DateTime? ReviewedAtUtc { get; set; }
 
+    /// <summary>طبقة تصحيح النص: نص السؤال كما صححه المراجع. null = النص الأصلي.</summary>
+    public string? CorrectedText { get; set; }
+
+    /// <summary>طبقة تصحيح الخيارات (العدد نفسه والترتيب نفسه). null = الخيارات الأصلية.</summary>
+    public string? CorrectedOptionsJson { get; set; }
+
+    public string EffectiveText => CorrectedText ?? OriginalText;
+    public string EffectiveOptionsJson => CorrectedOptionsJson ?? OriginalOptionsJson;
+
     /// <summary>بصمة النص بعد التطبيع الآمن (للتكرار). النص المحفوظ لا يتغير.</summary>
     public string? StemHash { get; set; }
 

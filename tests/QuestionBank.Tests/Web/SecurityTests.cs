@@ -149,6 +149,7 @@ public sealed class SecurityTests : IDisposable
     [InlineData("/api/queue")]
     [InlineData("/api/uploads")]
     [InlineData("/api/review/1/approve")]
+    [InlineData("/api/review/1/text")]
     [InlineData("/api/exports")]
     [InlineData("/api/reports/excel")]
     [InlineData("/api/templates")]

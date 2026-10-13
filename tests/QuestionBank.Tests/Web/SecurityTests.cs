@@ -56,11 +56,11 @@ public sealed class SecurityTests : IDisposable
                 b.ConfigureTestServices(s => s
                     .AddAuthentication(o =>
                     {
-                        o.DefaultScheme = TestAuthHandler.Scheme;
-                        o.DefaultAuthenticateScheme = TestAuthHandler.Scheme;
-                        o.DefaultChallengeScheme = TestAuthHandler.Scheme;
+                        o.DefaultScheme = TestAuthHandler.SchemeName;
+                        o.DefaultAuthenticateScheme = TestAuthHandler.SchemeName;
+                        o.DefaultChallengeScheme = TestAuthHandler.SchemeName;
                     })
-                    .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.Scheme, _ => { }));
+                    .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, _ => { }));
             }
         });
 
@@ -79,6 +79,12 @@ public sealed class SecurityTests : IDisposable
     [InlineData("POST", "/api/inventory/scan")]
     [InlineData("POST", "/api/inventory/abandon")]
     [InlineData("GET", "/not-a-real-page")]
+    [InlineData("GET", "/")]
+    [InlineData("GET", "/index.html")]
+    [InlineData("GET", "/app.js")]
+    [InlineData("GET", "/api/inventory/tree")]
+    [InlineData("GET", "/api/queue")]
+    [InlineData("POST", "/api/queue")]
     public async Task EveryOtherEndpoint_RequiresWindowsAuthentication(string method, string url)
     {
         var client = Client();
@@ -94,6 +100,11 @@ public sealed class SecurityTests : IDisposable
     [InlineData("CORP\\QB-Admins", "/api/config/paths", HttpStatusCode.OK)]
     [InlineData("CORP\\QB-Viewers", "/api/me", HttpStatusCode.OK)]
     [InlineData("CORP\\Some-Other-Group", "/api/me", HttpStatusCode.Forbidden)]
+    [InlineData("CORP\\QB-Viewers", "/", HttpStatusCode.OK)]
+    [InlineData("CORP\\Some-Other-Group", "/", HttpStatusCode.Forbidden)]
+    [InlineData("CORP\\QB-Reviewers", "/api/queue", HttpStatusCode.Forbidden)]
+    [InlineData("CORP\\QB-BankManagers", "/api/queue", HttpStatusCode.OK)]
+    [InlineData("CORP\\QB-BankManagers", "/api/inventory/tree", HttpStatusCode.OK)]
     public async Task Roles_FollowConfiguredAdGroups(string group, string url, HttpStatusCode expected)
     {
         var client = Client(testAuth: true);
@@ -125,7 +136,7 @@ public sealed class SecurityTests : IDisposable
         IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
     {
-        public const string Scheme = "Test";
+        public const string SchemeName = "Test";
         public const string GroupsHeader = "X-Test-Groups";
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -135,8 +146,8 @@ public sealed class SecurityTests : IDisposable
             var claims = new List<Claim> { new(ClaimTypes.Name, "CORP\\tester") };
             claims.AddRange(groups.ToString().Split(',', StringSplitOptions.RemoveEmptyEntries)
                 .Select(g => new Claim(ClaimTypes.Role, g.Trim())));
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme));
-            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme)));
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
+            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName)));
         }
     }
 }

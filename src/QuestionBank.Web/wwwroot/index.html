@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>بنك الأسئلة الداخلي</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="الأقسام">
+    <div class="brand"><i aria-hidden="true">ب</i>بنك الأسئلة</div>
+    <button class="nav" data-view="dash" type="button">لوحة الحالة</button>
+    <button class="nav" data-view="folders" type="button">مجلد الشبكة <span class="n" id="n-queue">0</span></button>
+    <span class="nav soon" aria-disabled="true">إسقاط الملفات <small>قريبًا</small></span>
+    <span class="nav soon" aria-disabled="true">المراجعة <small>قريبًا</small></span>
+    <span class="nav soon" aria-disabled="true">التصنيف <small>قريبًا</small></span>
+    <span class="nav soon" aria-disabled="true">سلة التصدير <small>قريبًا</small></span>
+    <div class="who"><b id="who-name">…</b><span id="who-roles"></span></div>
+  </nav>
+
+  <main>
+    <div class="banner bad" id="denied" hidden>صلاحياتك لا تشمل هذه الشاشة. تواصل مع مسؤول بنك الأسئلة.</div>
+
+    <!-- لوحة الحالة -->
+    <section data-screen="dash" hidden>
+      <div class="head">
+        <div><h1>لوحة الحالة</h1><p class="sub">جرد ملفات مجلد الشبكة. الجرد يسجّل الملفات فقط ولا يفتح محتواها ولا يعدّلها.</p></div>
+        <div class="actions">
+          <button class="btn primary" id="btn-scan" type="button">بدء الجرد</button>
+          <button class="btn" id="btn-abandon" type="button" hidden>إيقاف العملية نهائيًا</button>
+          <span class="confirm" id="abandon-confirm" hidden>
+            إيقاف نهائي؟ الجرد التالي يبدأ من جديد.
+            <button class="btn danger sm" id="abandon-yes" type="button">نعم، أوقف</button>
+            <button class="btn sm" id="abandon-no" type="button">لا</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="banner warn" id="problem" hidden></div>
+
+      <div class="grid g5">
+        <div class="panel stat"><div class="k">ملفات مسجلة</div><div class="v" id="s-total">–</div><div class="s" id="s-total-sub"></div></div>
+        <div class="panel stat"><div class="k">بانتظار المعالجة</div><div class="v" id="s-pending">–</div></div>
+        <div class="panel stat"><div class="k">مكتمل</div><div class="v ok" id="s-completed">–</div></div>
+        <div class="panel stat"><div class="k">فشل</div><div class="v bad" id="s-failed">–</div></div>
+        <div class="panel stat"><div class="k">مفقود من المصدر</div><div class="v muted" id="s-missing">–</div></div>
+      </div>
+
+      <div class="grid g2">
+        <div class="panel">
+          <h2 id="run-title">عملية الجرد</h2>
+          <div id="run-body" class="muted">لم يُجرَ أي جرد بعد. اضغط «بدء الجرد».</div>
+        </div>
+        <div class="panel">
+          <h2>الصيغ</h2>
+          <div id="exts" class="muted">لا توجد ملفات بعد.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- مجلد الشبكة -->
+    <section data-screen="folders" hidden>
+      <div class="head">
+        <div><h1>مجلد الشبكة</h1><p class="sub">المجلدات كما سجّلها الجرد. اسحب مجلدًا إلى قائمة المعالجة، أو استخدم زر «أضف». الملفات تبقى في مكانها ولا يُرفع شيء.</p></div>
+      </div>
+      <div class="grid g2 align-start">
+        <div class="panel">
+          <h2>بنك الأسئلة <small class="muted">(للقراءة فقط)</small></h2>
+          <div id="tree-empty" class="muted" hidden>لا توجد مجلدات بعد. شغّل الجرد من لوحة الحالة أولًا.</div>
+          <ul class="tree" id="tree" role="tree" aria-label="مجلدات المصدر"></ul>
+        </div>
+        <div class="panel">
+          <h2>قائمة المعالجة</h2>
+          <p class="note">الطلبات تُحفظ بالترتيب. الاستخراج الفعلي يبدأ عند تفعيل قارئات الملفات في المرحلة 2.</p>
+          <div class="queue" id="queue" aria-label="قائمة المعالجة. أفلت مجلدًا هنا">
+            <div class="empty" id="queue-empty">أفلت مجلدًا هنا</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toast-msg"></span><button id="toast-undo" type="button" hidden>تراجع</button></div>
+<script src="app.js"></script>
+</body>
+</html>

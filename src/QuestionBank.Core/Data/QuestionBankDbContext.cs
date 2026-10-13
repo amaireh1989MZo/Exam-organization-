@@ -8,6 +8,7 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<SourceFile> SourceFiles => Set<SourceFile>();
     public DbSet<ScanRun> ScanRuns => Set<ScanRun>();
     public DbSet<ScanDirectory> ScanDirectories => Set<ScanDirectory>();
+    public DbSet<ProcessingQueueItem> ProcessingQueue => Set<ProcessingQueueItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -38,6 +39,15 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.HasIndex(x => new { x.RunId, x.RelativePath }).IsUnique();
             e.HasIndex(x => new { x.RunId, x.Status, x.NextAttemptUtc });
             e.HasOne<ScanRun>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProcessingQueueItem>(e =>
+        {
+            e.ToTable("ProcessingQueue");
+            e.Property(x => x.RelativePath).HasMaxLength(2048).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+            e.Property(x => x.RequestedBy).HasMaxLength(256).IsRequired();
+            e.HasIndex(x => new { x.Status, x.Id });
         });
     }
 }

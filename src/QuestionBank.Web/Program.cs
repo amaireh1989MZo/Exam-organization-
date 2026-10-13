@@ -23,6 +23,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ISourceFileSystem, PhysicalSourceFileSystem>();
 builder.Services.AddScoped<InventoryScanner>();
 builder.Services.AddScoped<InventoryQueries>();
+builder.Services.AddScoped<FolderService>();
 builder.Services.AddSingleton<InventoryCoordinator>();
 if (builder.Configuration.GetValue("QuestionBank:EnableWorker", true))
     builder.Services.AddHostedService<InventoryWorker>();
@@ -49,6 +50,13 @@ if (!app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// الواجهة بعد التحقق من الصلاحية، فتنطبق عليها السياسة الافتراضية: لا يراها إلا من له دور.
+app.UseDefaultFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-store"
+});
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
 
@@ -103,6 +111,33 @@ inventory.MapPost("/abandon", (InventoryCoordinator coordinator) =>
     return Results.Accepted("/api/inventory/status", new { message = "طُلب إيقاف عملية الجرد الحالية نهائيًا." });
 });
 
+inventory.MapGet("/tree", async (string? path, FolderService folders, CancellationToken ct) =>
+{
+    var listing = await folders.ListAsync(path ?? "", ct);
+    return listing is null
+        ? Results.NotFound(new { message = "المجلد غير موجود في الجرد." })
+        : Results.Ok(listing);
+});
+
+var queue = app.MapGroup("/api/queue").RequireAuthorization(AppPolicies.ManageBank);
+
+queue.MapGet("/", async (FolderService folders, CancellationToken ct) => Results.Ok(await folders.GetQueueAsync(ct)));
+
+queue.MapPost("/", async (EnqueueRequest request, HttpContext ctx, FolderService folders, CancellationToken ct) =>
+{
+    var (outcome, entry) = await folders.EnqueueAsync(request.Path ?? "", ctx.User.Identity?.Name ?? "unknown", ct);
+    return outcome switch
+    {
+        EnqueueOutcome.Added => Results.Created($"/api/queue/{entry!.Id}", entry),
+        EnqueueOutcome.AlreadyQueued => Results.Ok(entry),
+        EnqueueOutcome.InvalidPath => Results.BadRequest(new { message = "مسار المجلد غير صالح." }),
+        _ => Results.NotFound(new { message = "المجلد غير موجود في الجرد أو لا يحتوي ملفات." })
+    };
+});
+
+queue.MapDelete("/{id:long}", async (long id, FolderService folders, CancellationToken ct) =>
+    await folders.CancelAsync(id, ct) ? Results.NoContent() : Results.NotFound());
+
 app.Run();
 
 static async Task InitializeDatabaseAsync(IServiceProvider services, string connectionString)
@@ -120,3 +155,5 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
 }
 
 public partial class Program;
+
+public sealed record EnqueueRequest(string? Path);

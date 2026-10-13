@@ -150,6 +150,9 @@ th{background:var(--sunk);font-weight:600;font-size:12.5px;color:var(--muted);wh
 .basket{min-height:180px;border:2px dashed var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px}
 .basket.over{background:var(--drop);border-color:var(--accent)}
 .bitem{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:13.5px;background:var(--bg);border-radius:8px;padding:6px 10px}
+/* export options */
+.opts-x{display:flex;flex-direction:column;gap:4px;margin-top:12px;font-size:13.5px}
+.opts-x label{display:flex;gap:8px;align-items:center;cursor:pointer}
 textarea.gift{width:100%;min-height:260px;font-family:var(--f-mono);font-size:12.5px;direction:ltr;text-align:left;background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:12px;resize:vertical}
 
 /* ideas */
@@ -276,15 +279,16 @@ textarea.gift{width:100%;min-height:260px;font-family:var(--f-mono);font-size:12
 
   <!-- EXPORT -->
   <section data-screen="export" hidden>
-    <div class="head"><div><h1>سلة التصدير</h1><p class="sub">اسحب الأسئلة المعتمدة إلى السلة. قبل التصدير يفحص النظام بنية GIFT ويهرّب الرموز الخاصة.</p></div></div>
+    <div class="head"><div><h1>سلة التصدير</h1><p class="sub">اسحب الأسئلة المعتمدة إلى السلة. قبل التصدير يفحص النظام بنية كل سؤال، ثم يصدّر بصيغة GIFT أو Moodle XML.</p></div></div>
     <div class="grid g2">
       <div class="panel"><h2>أسئلة معتمدة</h2><div class="grid" id="approvedList" style="gap:8px"></div><div class="actions"><button class="btn sm" id="addAll">أضف الكل</button></div></div>
       <div class="panel"><h2>السلة</h2><div class="basket" id="basket"><div class="empty" id="bEmpty">أفلت الأسئلة هنا</div></div>
-        <div class="actions"><button class="btn primary" id="mkGift">إنشاء GIFT</button><button class="btn" id="mkXlsx">تقرير Excel</button><button class="btn" id="clearB">تفريغ</button></div></div>
+        <div class="opts-x"><label><input type="checkbox" id="xCat" checked> تصنيف حسب المؤشر (فئات Moodle)</label><label><input type="checkbox" id="xShuf"> السماح لـ Moodle بخلط الخيارات</label></div>
+        <div class="actions"><button class="btn primary" id="mkGift">إنشاء GIFT</button><button class="btn primary" id="mkXml">إنشاء Moodle XML</button><button class="btn" id="mkXlsx">تقرير Excel</button><button class="btn" id="clearB">تفريغ</button></div></div>
     </div>
     <div class="panel" style="margin-top:16px" id="giftPanel" hidden>
-      <div class="head" style="margin-bottom:10px"><h2 style="margin:0">ملف GIFT</h2><div class="actions" style="margin:0"><span id="giftReport"></span><button class="btn sm" id="copyGift">نسخ</button></div></div>
-      <textarea class="gift" id="giftOut" readonly aria-label="نص GIFT"></textarea>
+      <div class="head" style="margin-bottom:10px"><h2 style="margin:0" id="outTitle">ملف GIFT</h2><div class="actions" style="margin:0"><span id="giftReport"></span><button class="btn sm" id="copyGift">نسخ</button></div></div>
+      <textarea class="gift" id="giftOut" readonly aria-label="نص الملف الناتج"></textarea>
     </div>
   </section>
 
@@ -553,19 +557,73 @@ function addB(id){if(id&&!basket.includes(id)){basket.push(id);renderExport()}}
 $('#addAll').onclick=()=>{Q.filter(q=>q.st==='approved').forEach(q=>addB(q.id))};
 $('#clearB').onclick=()=>{const prev=[...basket];basket=[];renderExport();$('#giftPanel').hidden=true;toast('فُرّغت السلة',()=>{basket=prev;renderExport()})};
 const gEsc=s=>String(s).replace(/([~=#{}:\\])/g,'\\$1');
+const FWNAME='إطار وظيفة إدارية - إصدار 2.1';
+const domOf=c=>{for(const d of FW)for(const sb of d.subs)if(sb.inds.some(i=>i[0]===c))return [d.d,sb.s];return null};
+/* split basket into exportable questions and rejected ones (shared by both formats) */
+function prepExport(){
+  if(!basket.length){toast('السلة فارغة');return null}
+  const good=[],bad=[];
+  basket.forEach(id=>{const q=Q.find(x=>x.id===id);(q.a==null||q.o.length<2?bad:good).push(q)});
+  return {good,bad};
+}
+function showOut(title,text,chips){
+  $('#outTitle').textContent=title;$('#giftOut').value=text;
+  $('#giftReport').innerHTML=chips;$('#giftPanel').hidden=false;
+  $('#giftPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 $('#mkGift').onclick=()=>{
-  if(!basket.length)return toast('السلة فارغة');
-  let ok=0,bad=[],escaped=0;
-  const out=basket.map(id=>{const q=Q.find(x=>x.id===id);
-    if(q.a==null||q.o.length<2){bad.push(q.id);return `// خطأ: ${q.id} بلا إجابة صحيحة، لم يُصدَّر`}
-    const raw=q.t+q.o.join('');escaped+=(raw.match(/[~=#{}:\\]/g)||[]).length;ok++;
-    return `// ${q.id} | مصدر: ${q.src} | ${q.pos}${q.ind?` | مؤشر: ${q.ind} | إطار: 2.1`:''}\n::${q.id}::${gEsc(q.t)} {\n${q.o.map((o,i)=>`  ${i===q.a?'=':'~'}${gEsc(o)}`).join('\n')}\n}`}).join('\n\n');
-  $('#giftOut').value='// UTF-8 · ترتيب الخيارات كما في الأصل\n\n'+out+'\n';
-  $('#giftReport').innerHTML=`<span class="chip ok">${ok} صالح</span> ${bad.length?`<span class="chip bad">${bad.length} مرفوض</span>`:''} <span class="chip wait">${escaped} رمز مُهرّب</span>`;
-  $('#giftPanel').hidden=false;
+  const r=prepExport();if(!r)return;
+  let escaped=0;
+  const out=r.good.map(q=>{escaped+=((q.t+q.o.join('')).match(/[~=#{}:\\]/g)||[]).length;
+    return `// ${q.id} | مصدر: ${q.src} | ${q.pos}${q.ind?` | مؤشر: ${q.ind} | إطار: 2.1`:''}\n::${q.id}::${gEsc(q.t)} {\n${q.o.map((o,i)=>`  ${i===q.a?'=':'~'}${gEsc(o)}`).join('\n')}\n}`})
+    .concat(r.bad.map(q=>`// خطأ: ${q.id} بلا إجابة صحيحة، لم يُصدَّر`)).join('\n\n');
+  showOut('ملف GIFT','// UTF-8 · ترتيب الخيارات كما في الأصل\n\n'+out+'\n',
+    `<span class="chip ok">${r.good.length} صالح</span> ${r.bad.length?`<span class="chip bad">${r.bad.length} مرفوض</span>`:''} <span class="chip wait">${escaped} رمز مُهرّب</span>`);
+};
+/* Moodle XML: multichoice, single answer, RTL HTML inside CDATA, optional category per indicator */
+const xEsc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cdata=html=>'<![CDATA['+html.replace(/]]>/g,']]]]><![CDATA[>')+']]>';
+const rtl=t=>`<p dir="rtl">${xEsc(t)}</p>`;
+$('#mkXml').onclick=()=>{
+  const r=prepExport();if(!r)return;
+  const byCat=$('#xCat').checked, shuffle=$('#xShuf').checked;
+  const catPath=q=>{if(!q.ind)return `$course$/top/${FWNAME}/بلا مؤشر`;const[d,sb]=domOf(q.ind)||['',''];return `$course$/top/${FWNAME}/${d}/${sb}/${q.ind}`};
+  const qs=[...r.good];if(byCat)qs.sort((a,b)=>catPath(a).localeCompare(catPath(b),'ar'));
+  let lastCat=null;const parts=[];
+  qs.forEach(q=>{
+    if(byCat){const c=catPath(q);if(c!==lastCat){parts.push(`  <question type="category">\n    <category><text>${xEsc(c)}</text></category>\n  </question>`);lastCat=c}}
+    const tags=[q.ind&&`indicator:${q.ind}`,'framework:2.1',`source:${q.src.split('/').pop()}`].filter(Boolean);
+    parts.push(`  <!-- ${q.id} | مصدر: ${xEsc(q.src)} | ${xEsc(q.pos)} -->
+  <question type="multichoice">
+    <name><text>${xEsc(q.id)}</text></name>
+    <questiontext format="html"><text>${cdata(rtl(q.t))}</text></questiontext>
+    <generalfeedback format="html"><text></text></generalfeedback>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber>${xEsc(q.id)}</idnumber>
+    <single>true</single>
+    <shuffleanswers>${shuffle?'true':'false'}</shuffleanswers>
+    <answernumbering>none</answernumbering>
+${q.o.map((o,i)=>`    <answer fraction="${i===q.a?100:0}" format="html">
+      <text>${cdata(rtl(o))}</text>
+      <feedback format="html"><text></text></feedback>
+    </answer>`).join('\n')}
+    <tags>
+${tags.map(t=>`      <tag><text>${xEsc(t)}</text></tag>`).join('\n')}
+    </tags>
+  </question>`);
+  });
+  r.bad.forEach(q=>parts.push(`  <!-- خطأ: ${q.id} بلا إجابة صحيحة، لم يُصدَّر -->`));
+  const xml=`<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n${parts.join('\n\n')}\n</quiz>\n`;
+  /* well-formedness check, as the real exporter would do before writing the file */
+  const okXml=!new DOMParser().parseFromString(xml,'application/xml').querySelector('parsererror');
+  const cats=byCat?new Set(qs.map(catPath)).size:0;
+  showOut('ملف Moodle XML',xml,
+    `<span class="chip ${okXml?'ok':'bad'}">${okXml?'XML سليم البنية':'خطأ في بنية XML'}</span> <span class="chip ok">${r.good.length} سؤال</span> ${r.bad.length?`<span class="chip bad">${r.bad.length} مرفوض</span>`:''} ${byCat?`<span class="chip wait">${cats} فئة</span>`:''}`);
 };
 $('#mkXlsx').onclick=()=>toast('في التطبيق الحقيقي: ملف Excel فيه الأسئلة والمصدر والمؤشر وحالة المراجعة.');
-$('#copyGift').onclick=()=>{const t=$('#giftOut');navigator.clipboard?.writeText(t.value).then(()=>toast('نُسخ نص GIFT')).catch(()=>{t.select();toast('حدد النص وانسخه يدويًا')})};
+$('#copyGift').onclick=()=>{const t=$('#giftOut');navigator.clipboard?.writeText(t.value).then(()=>toast('نُسخ النص')).catch(()=>{t.select();toast('حدد النص وانسخه يدويًا')})};
 
 /* ---------- ideas ---------- */
 [['بحث شامل','ابحث بنص السؤال أو جزء منه أو برمز المؤشر، مع فلاتر للتخصص والسنة والحالة.'],

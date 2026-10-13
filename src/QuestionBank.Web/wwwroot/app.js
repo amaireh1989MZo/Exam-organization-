@@ -704,8 +704,9 @@ async function loadDups() {
   let page;
   try { page = await api('GET', '/api/quality/duplicates?kind=' + dupKind); } catch { return; }
   $('#n-dups').textContent = fmt(page.exactGroups);
-  $('#dup-filters').replaceChildren(...[['Exact', 'تكرار حرفي', page.exactGroups], ['SameStem', 'النص نفسه بخيارات مختلفة', page.sameStemGroups]].map(([k, label, n]) => {
-    const b = el('button', { className: 'btn sm' + (dupKind === k ? ' on' : ''), type: 'button', textContent: `${label} ${fmt(n)}` });
+  const filters = [['Exact', 'تكرار حرفي', page.exactGroups], ['SameStem', 'النص نفسه بخيارات مختلفة', page.sameStemGroups], ['Near', 'شبه تكرار (صياغة مختلفة قليلًا)', page.nearGroups]];
+  $('#dup-filters').replaceChildren(...filters.map(([k, label, n]) => {
+    const b = el('button', { className: 'btn sm' + (dupKind === k ? ' on' : ''), type: 'button', textContent: n == null ? label : `${label} ${fmt(n)}` });
     b.onclick = () => { dupKind = k; loadDups(); };
     return b;
   }));
@@ -720,7 +721,8 @@ async function loadDups() {
         el('div', { className: 't', textContent: m.text }), ol,
         el('div', { className: 'm' }, el('bdi', { textContent: m.source }), ` · ${m.location} · ${RV_STATUS_AR[m.reviewStatus] || m.reviewStatus}`));
     }));
-    const head = el('div', { className: 'dh' }, el('h2', { textContent: `مجموعة ${fmt(gi + 1)} · ${fmt(g.count)} نسخ`, style: 'margin:0' }));
+    const title = `مجموعة ${fmt(gi + 1)} · ${fmt(g.count)} ${dupKind === 'Near' ? 'أسئلة' : 'نسخ'}` + (g.similarity != null ? ` · تشابه ${Math.round(g.similarity * 100)}% على الأقل` : '');
+    const head = el('div', { className: 'dh' }, el('h2', { textContent: title, style: 'margin:0' }));
     if (g.answersDiffer) head.append(el('span', { className: 'chip bad', textContent: 'الإجابات مختلفة بين النسخ' }));
     box.append(el('div', { className: 'panel dgroup' }, head, members));
   });

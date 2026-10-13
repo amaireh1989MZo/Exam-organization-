@@ -286,7 +286,13 @@ app.MapGet("/api/quality/duplicates", async (string? kind, int? skip, int? take,
 {
     var k = DuplicateKind.Exact;
     if (!string.IsNullOrEmpty(kind) && !Enum.TryParse(kind, ignoreCase: true, out k))
-        return Results.BadRequest(new { message = "النوع يجب أن يكون Exact أو SameStem." });
+        return Results.BadRequest(new { message = "النوع يجب أن يكون Exact أو SameStem أو Near." });
+    if (k == DuplicateKind.Near)
+    {
+        var counts = await service.GetGroupsAsync(DuplicateKind.Exact, 0, 1, ct);
+        var (nearCount, nearGroups) = await service.GetNearGroupsAsync(skip ?? 0, take ?? 50, ct);
+        return Results.Ok(new DuplicatePage(counts.ExactGroups, counts.SameStemGroups, nearCount, nearGroups, nearCount));
+    }
     return Results.Ok(await service.GetGroupsAsync(k, skip ?? 0, take ?? 50, ct));
 }).RequireAuthorization(AppPolicies.Review);
 
@@ -368,6 +374,7 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
     await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
     // بصمات التكرار للأسئلة المستخرجة قبل إضافة الميزة.
     await scope.ServiceProvider.GetRequiredService<DuplicateService>().BackfillAsync(CancellationToken.None);
+    await scope.ServiceProvider.GetRequiredService<DuplicateService>().BackfillBandsAsync(CancellationToken.None);
 }
 
 public partial class Program;

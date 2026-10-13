@@ -108,10 +108,15 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
             added.Add(entity);
         }
         await db.SaveChangesAsync(cancellationToken);
+        foreach (var entity in added)
+            AddBands(db, entity);
+        await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
         // نفصل الأسئلة فقط حتى لا تكبر الذاكرة؛ كيانات المستدعي (الملف، الطلب) تبقى متتبَّعة.
         foreach (var entity in added)
             db.Entry(entity).State = EntityState.Detached;
+        foreach (var band in db.ChangeTracker.Entries<Quality.QuestionBand>().ToList())
+            band.State = EntityState.Detached;
 
         return new ExtractionOutcome(true, result.Questions.Count, result.Warnings.Count, null);
     }
@@ -121,6 +126,14 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
     /// ويتغير إذا تغيّر الملف. نسختان متطابقتان في مجلدين تبقيان سؤالين لكل منهما مصدره،
     /// والتكرار بينهما يكشفه فحص الجودة (ContentHash متساوٍ) ولا يُحذف تلقائيًا.
     /// </summary>
+    /// <summary>مفاتيح MinHash لشبه التكرار، على نص السؤال وحده.</summary>
+    public static void AddBands(QuestionBankDbContext db, Question q)
+    {
+        var keys = Quality.NearDuplicates.BandKeys(q.OriginalText);
+        for (var b = 0; b < keys.Count; b++)
+            db.QuestionBands.Add(new Quality.QuestionBand { QuestionId = q.Id, Band = (byte)b, Key = keys[b] });
+    }
+
     private static string UniqueKey(string source, string hash, int order, HashSet<string> taken)
     {
         var key = StableKey(source, hash, order);

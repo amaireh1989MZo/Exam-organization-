@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using QuestionBank.Core.Export;
 using QuestionBank.Core.Extraction;
 using QuestionBank.Core.Inventory;
+using QuestionBank.Core.Quality;
 using QuestionBank.Core.Review;
 
 namespace QuestionBank.Core.Data;
@@ -16,6 +17,7 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<Upload> Uploads => Set<Upload>();
     public DbSet<AuditEntry> AuditLog => Set<AuditEntry>();
     public DbSet<ExportRecord> Exports => Set<ExportRecord>();
+    public DbSet<QuestionBand> QuestionBands => Set<QuestionBand>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -107,6 +109,14 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.NewValue).HasMaxLength(200);
             e.HasIndex(x => new { x.EntityType, x.EntityId });
             e.HasIndex(x => x.AtUtc);
+        });
+
+        modelBuilder.Entity<QuestionBand>(e =>
+        {
+            e.Property(x => x.Key).HasMaxLength(16).IsRequired();
+            e.HasIndex(x => new { x.Band, x.Key });
+            e.HasIndex(x => x.QuestionId);
+            e.HasOne<Question>().WithMany().HasForeignKey(x => x.QuestionId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ExportRecord>(e =>

@@ -432,6 +432,32 @@ namespace QuestionBank.Core.Data.Migrations
                     b.ToTable("SourceFiles");
                 });
 
+            modelBuilder.Entity("QuestionBank.Core.Quality.QuestionBand", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte>("Band")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("QuestionId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QuestionId");
+
+                    b.HasIndex("Band", "Key");
+
+                    b.ToTable("QuestionBands");
+                });
+
             modelBuilder.Entity("QuestionBank.Core.Review.AuditEntry", b =>
                 {
                     b.Property<long>("Id")
@@ -494,6 +520,15 @@ namespace QuestionBank.Core.Data.Migrations
                     b.HasOne("QuestionBank.Core.Inventory.ScanRun", null)
                         .WithMany()
                         .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Quality.QuestionBand", b =>
+                {
+                    b.HasOne("QuestionBank.Core.Extraction.Question", null)
+                        .WithMany()
+                        .HasForeignKey("QuestionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

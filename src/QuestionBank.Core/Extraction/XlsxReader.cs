@@ -11,11 +11,38 @@ namespace QuestionBank.Core.Extraction;
 /// الإجابة تُقبل حرفًا (ب، b) أو رقمًا (2) أو نص الخيار نفسه.
 /// الورقة التي لا تُعرف أعمدتها تُذكر في التحذيرات (تحتاج مطابقة يدوية في الواجهة لاحقًا).
 /// </summary>
-public sealed class XlsxReader : IQuestionReader
+public sealed class XlsxReader(IReadOnlyList<ColumnTemplateMap>? templates = null) : IQuestionReader
 {
+    public const string NeedsMappingMarker = "تحتاج مطابقة يدوية";
+
     public string Name => "xlsx";
-    public string Version => "0.9";
+    public string Version => "1.0";
     public bool CanRead(string extension) => extension == "xlsx";
+
+    /// <summary>مفتاح صف العناوين: العناوين المطبَّعة بترتيب الأعمدة. يُستخدم لمطابقة القوالب المحفوظة.</summary>
+    public static string HeaderKey(IEnumerable<string> headers) =>
+        string.Join("|", headers.Select(TextNormalizer.Normalize));
+
+    /// <summary>أول صفوف كل ورقة كنصوص، لعرضها في شاشة المطابقة اليدوية.</summary>
+    public static IReadOnlyList<SheetPreview> Preview(byte[] content, int maxRows = HeaderSearchRows)
+    {
+        using var doc = SpreadsheetDocument.Open(new MemoryStream(content), false);
+        var wb = doc.WorkbookPart;
+        if (wb?.Workbook?.Sheets is null)
+            return [];
+        var shared = wb.SharedStringTablePart?.SharedStringTable?.Elements<SharedStringItem>().Select(s => s.InnerText).ToArray() ?? [];
+        var result = new List<SheetPreview>();
+        foreach (var sheet in wb.Workbook.Sheets.Elements<Sheet>())
+        {
+            if (sheet.Id?.Value is not { } rid || wb.GetPartById(rid) is not WorksheetPart part)
+                continue;
+            var rows = ReadRows(part, shared).Take(maxRows).ToList();
+            var width = rows.Count == 0 ? 0 : rows.Max(r => r.Cells.Keys.DefaultIfEmpty(-1).Max()) + 1;
+            result.Add(new SheetPreview(sheet.Name?.Value ?? "ورقة",
+                rows.Select(r => new PreviewRow(r.RowNo, Enumerable.Range(0, width).Select(c => r.Cells.GetValueOrDefault(c, "")).ToList())).ToList()));
+        }
+        return result;
+    }
 
     private const int HeaderSearchRows = 10;
 
@@ -65,7 +92,7 @@ public sealed class XlsxReader : IQuestionReader
                 var map = FindHeader(rows);
                 if (map is null)
                 {
-                    warnings.Add($"ورقة «{sheetName}»: لم تُعرف أعمدة السؤال والخيارات من العناوين؛ تحتاج مطابقة يدوية.");
+                    warnings.Add($"ورقة «{sheetName}»: لم تُعرف أعمدة السؤال والخيارات من العناوين؛ {NeedsMappingMarker}.");
                     continue;
                 }
 
@@ -134,8 +161,27 @@ public sealed class XlsxReader : IQuestionReader
             detector, confidence, $"ورقة {sheet} · صف {rowNo}", issues);
     }
 
-    private static ColumnMap? FindHeader(List<(int RowNo, Dictionary<int, string> Cells)> rows)
+    private ColumnMap? FindHeader(List<(int RowNo, Dictionary<int, string> Cells)> rows)
     {
+        // القالب المحفوظ له الأولوية: صف عناوين مطابق تمامًا لما علّمه المستخدم.
+        if (templates is { Count: > 0 })
+        {
+            foreach (var (rowNo, cells) in rows.Take(HeaderSearchRows))
+            {
+                var ordered = cells.OrderBy(c => c.Key).ToList();
+                var key = HeaderKey(ordered.Select(c => c.Value));
+                var t = templates.FirstOrDefault(x => x.HeaderKey == key);
+                if (t is null)
+                    continue;
+                int? Col(string? header) => header is null ? null
+                    : ordered.Where(c => TextNormalizer.Normalize(c.Value) == TextNormalizer.Normalize(header)).Select(c => (int?)c.Key).FirstOrDefault();
+                var stemCol = Col(t.Stem);
+                var optionCols = t.Options.Select(Col).Where(c => c is not null).Select(c => c!.Value).ToList();
+                if (stemCol is not null && optionCols.Count >= 2)
+                    return new ColumnMap(rowNo, stemCol.Value, optionCols, Col(t.Answer), Col(t.Code));
+            }
+        }
+
         foreach (var (rowNo, cells) in rows.Take(HeaderSearchRows))
         {
             int? stem = null, answer = null, code = null;

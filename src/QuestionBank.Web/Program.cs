@@ -41,6 +41,7 @@ builder.Services.AddScoped<ReviewService>();
 builder.Services.AddScoped<ExportService>();
 builder.Services.AddScoped<DuplicateService>();
 builder.Services.AddScoped<ExcelReportService>();
+builder.Services.AddScoped<ColumnTemplateService>();
 builder.Services.AddSingleton<ExtractionSignal>();
 builder.Services.AddSingleton<InventoryCoordinator>();
 if (builder.Configuration.GetValue("QuestionBank:EnableWorker", true))
@@ -196,11 +197,47 @@ queue.MapDelete("/{id:long}", async (long id, FolderService folders, Cancellatio
 
 var uploads = app.MapGroup("/api/uploads").RequireAuthorization(AppPolicies.ManageBank);
 
+uploads.MapGet("/{id:long}/preview", async (long id, UploadService service, CancellationToken ct) =>
+{
+    var stored = await service.StoredAsync(id, ct);
+    if (stored is null || stored.Value.Upload.Extension != "xlsx")
+        return Results.NotFound(new { message = "المعاينة متاحة لملفات Excel المرفوعة فقط." });
+    try
+    {
+        return Results.Ok(XlsxReader.Preview(await File.ReadAllBytesAsync(stored.Value.Path, ct)));
+    }
+    catch (Exception ex) when (ex is FormatException or InvalidDataException or DocumentFormat.OpenXml.Packaging.OpenXmlPackageException)
+    {
+        return Results.BadRequest(new { message = "تعذّرت قراءة ملف Excel." });
+    }
+});
+
+uploads.MapPost("/{id:long}/reextract", async (long id, UploadService service, CancellationToken ct) =>
+{
+    var view = await service.ReextractAsync(id, ct);
+    return view is null ? Results.NotFound() : Results.Ok(view);
+});
+
+var templates = app.MapGroup("/api/templates").RequireAuthorization(AppPolicies.ManageBank);
+
+templates.MapGet("/", async (ColumnTemplateService service, CancellationToken ct) => Results.Ok(await service.ListAsync(ct)));
+
+templates.MapPost("/", async (TemplateRequest request, HttpContext ctx, ColumnTemplateService service, ExtractionSignal signal, CancellationToken ct) =>
+{
+    var (template, error) = await service.SaveAsync(request, UserName(ctx), ct);
+    if (template is null)
+        return Results.BadRequest(new { message = error });
+    var requeued = await service.RequeueUnmappedAsync(UserName(ctx), ct);
+    if (requeued > 0)
+        signal.Notify();
+    return Results.Ok(new { template, requeuedSourceFiles = requeued });
+});
+
 uploads.MapGet("/", async (UploadService service, ReaderRegistry readers, IOptions<UploadOptions> options, CancellationToken ct) =>
     Results.Ok(new
     {
         maxFileSizeMb = options.Value.MaxFileSizeMb,
-        allowedExtensions = options.Value.AllowZip ? options.Value.AllowedExtensions.Append("zip").ToArray() : options.Value.AllowedExtensions,
+        allowedExtensions = options.Value.AllowZip ? options.Value.Extensions.Append("zip").ToArray() : options.Value.Extensions.ToArray(),
         readableExtensions = readers.SupportedExtensions,
         items = await service.ListAsync(200, ct)
     }));

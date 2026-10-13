@@ -117,7 +117,13 @@ public sealed class QueueProcessor(
 
         var outcome = await extraction.ExtractAsync(content, file.Extension, file.Id, null, cancellationToken);
         file.Attempts++;
-        if (outcome.ErrorCode is null)
+        if (outcome.NeedsMapping)
+        {
+            file.Status = FileStatus.NeedsReview;
+            file.LastErrorCode = UploadService.NeedsColumnMapping;
+            file.ProcessedAtUtc = now;
+        }
+        else if (outcome.ErrorCode is null)
         {
             file.Status = FileStatus.Completed;
             file.LastErrorCode = null;

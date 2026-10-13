@@ -294,7 +294,7 @@ async function loadQueue() {
 }
 
 /* ---------- drop & upload ---------- */
-const STATUS_FILE_AR = { Pending: 'بانتظار قارئ لهذه الصيغة', Completed: 'تم', Failed: 'فشل', Processing: 'يُعالج' };
+const STATUS_FILE_AR = { Pending: 'بانتظار قارئ لهذه الصيغة', Completed: 'تم', Failed: 'فشل', Processing: 'يُعالج', NeedsReview: 'تحتاج مطابقة أعمدة' };
 const ERR_AR = { ReaderError: 'تعذّرت قراءة بنية الملف' };
 let uploadInfo = null; // يُحمَّل من الخادم؛ لا نحكم على صيغة ملف قبل وصوله
 let selectedUpload = null;
@@ -328,6 +328,7 @@ function uploadCard(u) {
 function statusChip(u) {
   if (u.status === 'Completed') return el('span', { className: 'chip ok', textContent: `تم · ${fmt(u.questionCount)} سؤال` });
   if (u.status === 'Failed') return el('span', { className: 'chip bad', textContent: ERR_AR[u.lastErrorCode] || 'فشل' });
+  if (u.status === 'NeedsReview') return el('span', { className: 'chip warn', textContent: 'تحتاج مطابقة أعمدة' });
   return el('span', { className: 'chip wait', textContent: STATUS_FILE_AR[u.status] || u.status });
 }
 
@@ -336,6 +337,7 @@ async function showQuestions(u) {
   $$('#file-list .file').forEach(c => c.dataset.id == u.id ? c.setAttribute('aria-current', 'true') : c.removeAttribute('aria-current'));
   $('#qpanel-title').textContent = `الأسئلة المستخرجة · ${u.originalName}`;
   const body = $('#qpanel-body');
+  if (u.status === 'NeedsReview' && u.lastErrorCode === 'NeedsColumnMapping') { showMapping(u); return; }
   if (u.status !== 'Completed') {
     body.className = 'muted';
     body.textContent = u.status === 'Pending' ? 'حُفظ الملف، وسيُستخرج عند تفعيل قارئ هذه الصيغة.' : 'تعذّر الاستخراج من هذا الملف.';
@@ -357,6 +359,102 @@ async function showQuestions(u) {
       q.issues.length ? el('div', { className: 'issues', textContent: q.issues.join(' · ') }) : '',
       el('div', { className: 'loc', textContent: `${q.location}${q.code ? ' · ' + q.code : ''} · ${CONF_AR[q.confidence]}` })));
   }
+}
+
+/* ---------- Excel column mapping ---------- */
+const MAP_SLOTS = [['stem', 'نص السؤال', true], ['o0', 'الخيار أ', true], ['o1', 'الخيار ب', true], ['o2', 'الخيار ج'], ['o3', 'الخيار د'],
+  ['o4', 'الخيار هـ'], ['o5', 'الخيار و'], ['answer', 'الإجابة الصحيحة'], ['code', 'رمز السؤال']];
+
+async function showMapping(u) {
+  const body = $('#qpanel-body');
+  $('#qpanel-title').textContent = `مطابقة أعمدة · ${u.originalName}`;
+  body.className = '';
+  body.replaceChildren(el('div', { className: 'muted', textContent: 'جارٍ تحميل المعاينة…' }));
+  let sheets;
+  try { sheets = await api('GET', `/api/uploads/${u.id}/preview`); } catch (e) { body.textContent = e.message; return; }
+  const st = { sheet: 0, headerRow: 0, map: {}, picked: null };
+  const render = () => renderMapping(u, sheets, st);
+  st.render = render;
+  render();
+}
+
+function renderMapping(u, sheets, st) {
+  const body = $('#qpanel-body');
+  body.replaceChildren();
+  const sheet = sheets[st.sheet];
+  if (!sheet || !sheet.rows.length) { body.append(el('div', { className: 'muted', textContent: 'الملف لا يحتوي بيانات.' })); return; }
+  body.append(el('p', { className: 'note', textContent: 'لم يتعرف النظام على أعمدة هذا الملف تلقائيًا. اسحب كل عمود إلى معناه مرة واحدة، ويُحفظ قالبًا يُطبَّق على كل ملف له العناوين نفسها.' }));
+
+  if (sheets.length > 1) {
+    const sel = el('select', { id: 'map-sheet' });
+    sheets.forEach((s, i) => sel.append(el('option', { value: i, textContent: s.name, selected: i === st.sheet })));
+    sel.onchange = () => { st.sheet = Number(sel.value); st.headerRow = 0; st.map = {}; st.render(); };
+    body.append(el('label', { className: 'field' }, 'الورقة:', sel));
+  }
+  const rowSel = el('select', { id: 'map-row' });
+  sheet.rows.forEach((r, i) => rowSel.append(el('option', { value: i, textContent: `صف ${r.rowNo}: ${r.cells.filter(Boolean).slice(0, 3).join(' · ')}`, selected: i === st.headerRow })));
+  rowSel.onchange = () => { st.headerRow = Number(rowSel.value); st.map = {}; st.render(); };
+  body.append(el('label', { className: 'field' }, 'صف العناوين:', rowSel));
+
+  const headers = sheet.rows[st.headerRow].cells;
+  const used = new Set(Object.values(st.map));
+  const palette = el('div', { className: 'cols' });
+  headers.forEach((h, col) => {
+    if (!h || used.has(col)) return;
+    const chip = el('span', { className: 'colchip' + (st.picked === col ? ' picked' : ''), draggable: true, textContent: h, tabIndex: 0 });
+    chip.addEventListener('dragstart', e => e.dataTransfer.setData('text/x-qb-col', String(col)));
+    chip.onclick = () => { st.picked = st.picked === col ? null : col; st.render(); };
+    palette.append(chip);
+  });
+  if (!palette.children.length) palette.append(el('span', { className: 'muted', textContent: 'استُخدمت كل الأعمدة' }));
+  body.append(palette);
+
+  const slots = el('div', { className: 'slots' });
+  for (const [key, label, required] of MAP_SLOTS) {
+    const col = st.map[key];
+    const slot = el('div', { className: 'slot' + (required ? ' req' : '') + (col !== undefined ? ' filled' : '') }, el('span', { className: 'lbl', textContent: label }));
+    if (col !== undefined) {
+      const chip = el('span', { className: 'colchip', textContent: headers[col], title: 'اضغط للإزالة' });
+      chip.onclick = e => { e.stopPropagation(); delete st.map[key]; st.render(); };
+      slot.append(chip);
+    } else slot.append(el('span', { className: 'muted', style: 'font-size:12px', textContent: 'أفلت عمودًا' }));
+    ['dragenter', 'dragover'].forEach(t => slot.addEventListener(t, e => { e.preventDefault(); slot.classList.add('over'); }));
+    slot.addEventListener('dragleave', () => slot.classList.remove('over'));
+    slot.addEventListener('drop', e => { e.preventDefault(); const c = Number(e.dataTransfer.getData('text/x-qb-col')); if (!Number.isNaN(c)) { st.map[key] = c; st.render(); } });
+    slot.onclick = () => { if (st.picked !== null) { st.map[key] = st.picked; st.picked = null; st.render(); } };
+    slots.append(slot);
+  }
+  body.append(slots);
+
+  const mapped = MAP_SLOTS.filter(([k]) => st.map[k] !== undefined);
+  if (mapped.length) {
+    const table = el('table');
+    table.append(el('thead', {}, el('tr', {}, ...mapped.map(([, label]) => el('th', { textContent: label })))));
+    const tbody = el('tbody');
+    sheet.rows.slice(st.headerRow + 1, st.headerRow + 4).forEach(r =>
+      tbody.append(el('tr', {}, ...mapped.map(([k]) => el('td', { textContent: r.cells[st.map[k]] || '' })))));
+    table.append(tbody);
+    body.append(el('div', { className: 'tablewrap' }, table));
+  }
+
+  const name = el('input', { id: 'map-name', value: st.name ?? u.originalName.replace(/\.xlsx$/i, ''), size: 30 });
+  name.oninput = () => { st.name = name.value; };
+  const save = el('button', { className: 'btn primary', type: 'button', textContent: 'حفظ القالب واستخراج الأسئلة' });
+  save.onclick = () => saveTemplate(u, headers, st, name.value);
+  body.append(el('label', { className: 'field' }, 'اسم القالب:', name), el('div', { className: 'actions' }, save));
+}
+
+async function saveTemplate(u, headers, st, name) {
+  const h = c => (st.map[c] === undefined ? null : headers[st.map[c]]);
+  const options = ['o0', 'o1', 'o2', 'o3', 'o4', 'o5'].map(h).filter(Boolean);
+  try {
+    const r = await api('POST', '/api/templates', { name, headers, stem: h('stem'), options, answer: h('answer'), code: h('code') });
+    const view = await api('POST', `/api/uploads/${u.id}/reextract`);
+    toast(`حُفظ القالب «${r.template.name}» واستُخرج ${fmt(view.questionCount)} سؤال` +
+      (r.requeuedSourceFiles ? `، وأُعيد ${fmt(r.requeuedSourceFiles)} ملفًا من مجلد الشبكة إلى الطابور.` : '.'));
+    await loadUploads();
+    showQuestions(view);
+  } catch (e) { toast(e.message); }
 }
 
 const dz = $('#dropzone');

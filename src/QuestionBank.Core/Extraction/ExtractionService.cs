@@ -7,7 +7,7 @@ using QuestionBank.Core.Review;
 
 namespace QuestionBank.Core.Extraction;
 
-public sealed record ExtractionOutcome(bool Supported, int QuestionCount, int Warnings, string? ErrorCode);
+public sealed record ExtractionOutcome(bool Supported, int QuestionCount, int Warnings, string? ErrorCode, bool NeedsMapping = false);
 
 /// <summary>
 /// يشغّل القارئ المناسب ويحفظ الأسئلة. إعادة الاستخراج لنفس المصدر تستبدل أسئلته في معاملة واحدة،
@@ -36,6 +36,9 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
         ReaderResult result;
         try
         {
+            // قوالب مطابقة أعمدة Excel التي علّمها المستخدمون.
+            if (reader is XlsxReader)
+                reader = new XlsxReader(await new ColumnTemplateService(db, time).MapsAsync(cancellationToken));
             result = reader.Read(content);
         }
         catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException or DecoderFallbackException)
@@ -118,7 +121,8 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
         foreach (var band in db.ChangeTracker.Entries<Quality.QuestionBand>().ToList())
             band.State = EntityState.Detached;
 
-        return new ExtractionOutcome(true, result.Questions.Count, result.Warnings.Count, null);
+        var needsMapping = result.Questions.Count == 0 && result.Warnings.Any(w => w.Contains(XlsxReader.NeedsMappingMarker));
+        return new ExtractionOutcome(true, result.Questions.Count, result.Warnings.Count, null, needsMapping);
     }
 
     /// <summary>

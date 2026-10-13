@@ -18,6 +18,7 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<AuditEntry> AuditLog => Set<AuditEntry>();
     public DbSet<ExportRecord> Exports => Set<ExportRecord>();
     public DbSet<QuestionBand> QuestionBands => Set<QuestionBand>();
+    public DbSet<ColumnTemplate> ColumnTemplates => Set<ColumnTemplate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -117,6 +118,17 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.HasIndex(x => new { x.Band, x.Key });
             e.HasIndex(x => x.QuestionId);
             e.HasOne<Question>().WithMany().HasForeignKey(x => x.QuestionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ColumnTemplate>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.HeaderKey).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.StemHeader).HasMaxLength(200).IsRequired();
+            e.Property(x => x.AnswerHeader).HasMaxLength(200);
+            e.Property(x => x.CodeHeader).HasMaxLength(200);
+            e.Property(x => x.CreatedBy).HasMaxLength(256).IsRequired();
+            e.HasIndex(x => x.HeaderKey).IsUnique();
         });
 
         modelBuilder.Entity<ExportRecord>(e =>

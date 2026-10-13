@@ -15,8 +15,18 @@ public sealed class UploadOptions
     [Range(1, 2048)]
     public int MaxFileSizeMb { get; set; } = 50;
 
-    /// <summary>الصيغ المقبولة داخل الرفع أو داخل ملف ZIP.</summary>
-    public string[] AllowedExtensions { get; set; } = ["docx", "xlsx", "xls", "doc", "pdf", "txt", "md", "gift"];
+    public static readonly string[] DefaultExtensions = ["docx", "xlsx", "xls", "doc", "pdf", "txt", "md", "gift"];
+
+    /// <summary>
+    /// الصيغ المقبولة كما في الإعدادات. تبدأ فارغة عمدًا: ربط المصفوفات في .NET يضيف قيم الإعدادات إلى القيم الافتراضية
+    /// ولا يستبدلها، فلو كانت لها قيمة افتراضية لما استطاع المسؤول حذف صيغة. استخدم Extensions.
+    /// </summary>
+    public string[] AllowedExtensions { get; set; } = [];
+
+    /// <summary>الصيغ الفعّالة: ما في الإعدادات (بلا تكرار وبأحرف صغيرة)، أو الافتراضية إذا لم يُضبط شيء.</summary>
+    public IReadOnlyList<string> Extensions =>
+        (AllowedExtensions.Length > 0 ? AllowedExtensions : DefaultExtensions)
+        .Select(e => e.Trim().TrimStart('.').ToLowerInvariant()).Where(e => e.Length > 0 && e != "zip").Distinct().ToList();
 
     /// <summary>قبول ملفات ZIP وفكّها بأمان. يمكن إيقافه من الإعدادات.</summary>
     public bool AllowZip { get; set; } = true;
@@ -76,7 +86,7 @@ public sealed class UploadService(
         var opt = uploadOptions.Value;
         var name = SafeDisplayName(fileName, 255);
         var ext = ExtensionOf(name);
-        if (ext is null || !opt.AllowedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+        if (ext is null || !opt.Extensions.Contains(ext))
             return Fail(UploadErrorCodes.ExtensionNotAllowed, "صيغة الملف غير مقبولة.");
 
         var root = UploadsRoot();
@@ -133,14 +143,7 @@ public sealed class UploadService(
             await db.SaveChangesAsync(cancellationToken);
 
             if (extraction.IsSupported(ext))
-            {
-                var outcome = await extraction.ExtractAsync(await File.ReadAllBytesAsync(final, cancellationToken), ext, null, upload.Id, cancellationToken);
-                upload.Status = outcome.ErrorCode is null ? FileStatus.Completed : FileStatus.Failed;
-                upload.LastErrorCode = outcome.ErrorCode;
-                upload.QuestionCount = outcome.QuestionCount;
-                upload.ProcessedAtUtc = time.GetUtcNow().UtcDateTime;
-                await db.SaveChangesAsync(cancellationToken);
-            }
+                await ExtractStoredAsync(upload, final, cancellationToken);
             return new UploadResult(ToView(upload), false, null, null);
         }
         finally
@@ -148,6 +151,39 @@ public sealed class UploadService(
             if (File.Exists(tmp))
                 File.Delete(tmp);
         }
+    }
+
+    public const string NeedsColumnMapping = "NeedsColumnMapping";
+
+    private async Task ExtractStoredAsync(Upload upload, string path, CancellationToken cancellationToken)
+    {
+        var outcome = await extraction.ExtractAsync(await File.ReadAllBytesAsync(path, cancellationToken), upload.Extension, null, upload.Id, cancellationToken);
+        upload.Status = outcome.ErrorCode is not null ? FileStatus.Failed : outcome.NeedsMapping ? FileStatus.NeedsReview : FileStatus.Completed;
+        upload.LastErrorCode = outcome.ErrorCode ?? (outcome.NeedsMapping ? NeedsColumnMapping : null);
+        upload.QuestionCount = outcome.QuestionCount;
+        upload.ProcessedAtUtc = time.GetUtcNow().UtcDateTime;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>مسار الملف المرفوع المحفوظ، أو null.</summary>
+    public async Task<(Upload Upload, string Path)?> StoredAsync(long id, CancellationToken cancellationToken)
+    {
+        var upload = await db.Uploads.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+        var root = UploadsRoot();
+        if (upload is null || root is null)
+            return null;
+        var full = Path.GetFullPath(Path.Combine(root, upload.StoredName));
+        return SourcePaths.IsSameOrInside(full, root) && File.Exists(full) ? (upload, full) : null;
+    }
+
+    /// <summary>يعيد استخراج ملف مرفوع (بعد حفظ قالب أعمدة مثلًا).</summary>
+    public async Task<UploadView?> ReextractAsync(long id, CancellationToken cancellationToken)
+    {
+        var stored = await StoredAsync(id, cancellationToken);
+        if (stored is null || !extraction.IsSupported(stored.Value.Upload.Extension))
+            return null;
+        await ExtractStoredAsync(stored.Value.Upload, stored.Value.Path, cancellationToken);
+        return ToView(stored.Value.Upload);
     }
 
     public static bool IsArchive(string fileName) =>
@@ -215,7 +251,7 @@ public sealed class UploadService(
                         skipped.Add(new(entryName, UploadErrorCodes.NestedArchive, "ملف ZIP داخل ZIP غير مقبول."));
                         continue;
                     }
-                    if (ext is null || !opt.AllowedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                    if (ext is null || !opt.Extensions.Contains(ext))
                     {
                         skipped.Add(new(entryName, UploadErrorCodes.ExtensionNotAllowed, "صيغة غير مقبولة."));
                         continue;

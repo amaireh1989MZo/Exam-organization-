@@ -58,6 +58,15 @@ public sealed class Question
 
     /// <summary>بصمة النص والخيارات بعد التطبيع، بغض النظر عن ترتيب الخيارات.</summary>
     public string? FullHash { get; set; }
+
+    // ---- التصنيف على الإطار (مؤشر موجود فعلًا في إطار مستورد فقط) ----
+    public long? IndicatorId { get; set; }
+    public long? FrameworkId { get; set; }
+    public Frameworks.MatchStatus MatchStatus { get; set; }
+    public string? MatchMethod { get; set; }
+    public double? MatchScore { get; set; }
+    public string? MatchedBy { get; set; }
+    public DateTime? MatchedAtUtc { get; set; }
 }
 
 /// <summary>ملف رفعه مستخدم من المتصفح. يُحفظ في مجلد النتائج باسم بصمته، وليس في المصدر.</summary>

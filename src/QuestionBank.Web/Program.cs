@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http.Features;
 using QuestionBank.Core.Data;
 using QuestionBank.Core.Export;
 using QuestionBank.Core.Extraction;
+using QuestionBank.Core.Frameworks;
 using QuestionBank.Core.Quality;
 using QuestionBank.Core.Reports;
 using QuestionBank.Core.Review;
@@ -42,6 +43,8 @@ builder.Services.AddScoped<ExportService>();
 builder.Services.AddScoped<DuplicateService>();
 builder.Services.AddScoped<ExcelReportService>();
 builder.Services.AddScoped<ColumnTemplateService>();
+builder.Services.AddSingleton<IIndicatorSuggester, LexicalSuggester>();
+builder.Services.AddScoped<FrameworkService>();
 builder.Services.AddSingleton<ExtractionSignal>();
 builder.Services.AddSingleton<InventoryCoordinator>();
 if (builder.Configuration.GetValue("QuestionBank:EnableWorker", true))
@@ -333,6 +336,40 @@ app.MapGet("/api/quality/duplicates", async (string? kind, int? skip, int? take,
     return Results.Ok(await service.GetGroupsAsync(k, skip ?? 0, take ?? 50, ct));
 }).RequireAuthorization(AppPolicies.Review);
 
+var frameworks = app.MapGroup("/api/frameworks").RequireAuthorization(AppPolicies.Review);
+
+frameworks.MapGet("/", async (FrameworkService service, CancellationToken ct) => Results.Ok(await service.ListAsync(ct)));
+
+frameworks.MapGet("/{id:long}/tree", async (long id, FrameworkService service, CancellationToken ct) =>
+    await service.TreeAsync(id, ct) is { } tree ? Results.Ok(tree) : Results.NotFound());
+
+frameworks.MapGet("/{id:long}/unclassified", async (long id, int? take, FrameworkService service, CancellationToken ct) =>
+    Results.Ok(await service.UnclassifiedAsync(id, take ?? 50, ct)));
+
+// استيراد الإطار لمدير النظام ومسؤول البنك فقط.
+frameworks.MapPost("/", async (HttpRequest request, FrameworkService service, CancellationToken ct) =>
+{
+    if (!request.HasFormContentType)
+        return Results.BadRequest(new { errors = new[] { "أرسل ملف الإطار بصيغة multipart/form-data." } });
+    var form = await request.ReadFormAsync(ct);
+    var file = form.Files.GetFile("file");
+    if (file is null || !file.FileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) || file.Length > 20 * 1024 * 1024)
+        return Results.BadRequest(new { errors = new[] { "أرسل ملف إطار بصيغة XLSX حتى 20 ميغابايت." } });
+    using var ms = new MemoryStream();
+    await file.CopyToAsync(ms, ct);
+    var result = await service.ImportAsync(ms.ToArray(), file.FileName, form["name"].ToString(), form["version"].ToString(),
+        request.HttpContext.User.Identity?.Name ?? "unknown", ct);
+    return result.Framework is null ? Results.BadRequest(result) : Results.Ok(result);
+}).RequireAuthorization(AppPolicies.ManageBank);
+
+app.MapPost("/api/classify/{questionId:long}", async (long questionId, ClassifyRequest request, HttpContext ctx, FrameworkService service, CancellationToken ct) =>
+    await service.AssignAsync(questionId, request.IndicatorId, request.Method ?? "manual", request.Score, UserName(ctx), ct) switch
+    {
+        ClassifyOutcome.Ok => Results.NoContent(),
+        ClassifyOutcome.IndicatorNotFound => Results.BadRequest(new { message = "المؤشر غير موجود في أي إطار مستورد." }),
+        _ => Results.NotFound()
+    }).RequireAuthorization(AppPolicies.Review);
+
 var reports = app.MapGroup("/api/reports").RequireAuthorization(AppPolicies.ManageBank);
 
 reports.MapPost("/excel", async (HttpContext ctx, ExcelReportService service, CancellationToken ct) =>
@@ -419,6 +456,8 @@ public partial class Program;
 public sealed record EnqueueRequest(string? Path);
 
 public sealed record AnswerRequest(int? Index);
+
+public sealed record ClassifyRequest(long? IndicatorId, string? Method, double? Score);
 
 public sealed record ExportRequestDto(string Format, long[]? QuestionIds, bool AllowShuffle, bool CategoryBySource);
 

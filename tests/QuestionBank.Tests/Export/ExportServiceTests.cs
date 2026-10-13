@@ -121,7 +121,7 @@ public sealed class ExportServiceTests : IDisposable
 
         var questions = doc.Root!.Elements("question").ToList();
         var category = questions.Single(q => (string?)q.Attribute("type") == "category");
-        Assert.Equal("$course$/top/بنك الأسئلة/إداري/2024", category.Element("category")!.Element("text")!.Value);
+        Assert.Equal("$course$/top/بنك الأسئلة/بلا مؤشر/إداري/2024", category.Element("category")!.Element("text")!.Value);
         var mc = questions.Where(q => (string?)q.Attribute("type") == "multichoice").ToList();
         Assert.Equal(2, mc.Count);
         var first = mc[0];

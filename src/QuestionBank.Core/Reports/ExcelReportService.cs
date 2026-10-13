@@ -49,6 +49,8 @@ public sealed class ExcelReportService(QuestionBankDbContext db, IOptions<Invent
                 sheets.Add(("الأسئلة", await WriteSheetAsync(wb, async w => questions = await WriteQuestionsAsync(w, cancellationToken))));
                 sheets.Add(("التكرار الحرفي", await WriteSheetAsync(wb, async w => dups = await WriteDuplicatesAsync(w, cancellationToken))));
                 sheets.Add(("الأخطاء", await WriteSheetAsync(wb, async w => errors = await WriteErrorsAsync(w, cancellationToken))));
+                if (await db.Frameworks.AnyAsync(cancellationToken))
+                    sheets.Add(("التغطية", await WriteSheetAsync(wb, w => WriteCoverageAsync(w, cancellationToken))));
 
                 wb.Workbook = new Workbook(new Sheets(sheets.Select((s, i) => new Sheet { Name = s.Name, SheetId = (uint)(i + 1), Id = s.Id })));
                 wb.Workbook.Save();
@@ -191,6 +193,24 @@ public sealed class ExcelReportService(QuestionBankDbContext db, IOptions<Invent
             n++;
         }
         return n;
+    }
+
+    /// <summary>كل مؤشر في كل إطار وعدد أسئلته (المعتمدة وكلها). المؤشر بلا أسئلة يظهر بصفر.</summary>
+    private async Task WriteCoverageAsync(OpenXmlWriter w, CancellationToken ct)
+    {
+        Header(w, "الإطار", "الإصدار", "المجال الرئيسي", "المجال الفرعي", "رمز المؤشر", "المؤشر", "كل الأسئلة", "المعتمدة");
+        var counts = await db.Questions.AsNoTracking()
+            .Where(q => q.IndicatorId != null && q.ReviewStatus != QuestionReviewStatus.Superseded)
+            .GroupBy(q => q.IndicatorId!.Value)
+            .Select(g => new { g.Key, All = g.Count(), Approved = g.Count(q => q.ReviewStatus == QuestionReviewStatus.Approved) })
+            .ToDictionaryAsync(x => x.Key, ct);
+        var frameworks = await db.Frameworks.AsNoTracking().ToDictionaryAsync(f => f.Id, ct);
+        await foreach (var i in db.Indicators.AsNoTracking().OrderBy(i => i.FrameworkId).ThenBy(i => i.Order).AsAsyncEnumerable().WithCancellation(ct))
+        {
+            var f = frameworks[i.FrameworkId];
+            var c = counts.GetValueOrDefault(i.Id);
+            Row(w, f.Name, f.Version, i.MainDomain, i.SubDomain ?? "", i.Code ?? "", i.Name, c?.All ?? 0, c?.Approved ?? 0);
+        }
     }
 
     // ---------- OpenXML helpers ----------

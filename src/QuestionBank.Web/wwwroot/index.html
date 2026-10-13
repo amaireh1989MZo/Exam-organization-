@@ -15,7 +15,7 @@
     <button class="nav" data-view="drop" type="button">إسقاط الملفات</button>
     <button class="nav" data-view="review" type="button">المراجعة <span class="n" id="n-review">0</span></button>
     <button class="nav" data-view="dups" type="button">التكرار <span class="n" id="n-dups">0</span></button>
-    <span class="nav soon" aria-disabled="true">التصنيف <small>قريبًا</small></span>
+    <button class="nav" data-view="classify" type="button">التصنيف</button>
     <button class="nav" data-view="export" type="button">سلة التصدير <span class="n" id="n-basket">0</span></button>
     <div class="who"><b id="who-name">…</b><span id="who-roles"></span></div>
   </nav>
@@ -115,7 +115,7 @@
           <h2>السلة</h2>
           <div class="queue basket" id="ex-basket" aria-label="سلة التصدير. أفلت الأسئلة هنا"></div>
           <div class="opts-x">
-            <label><input type="checkbox" id="ex-cat" checked> فئة في Moodle لكل مجلد مصدر</label>
+            <label><input type="checkbox" id="ex-cat" checked> فئات في Moodle: لكل مؤشر، أو لمجلد المصدر إن لم يُصنَّف السؤال</label>
             <label><input type="checkbox" id="ex-shuffle"> السماح لـ Moodle بخلط الخيارات</label>
           </div>
           <div class="actions" style="margin-top:12px">
@@ -139,6 +139,33 @@
       </div>
       <div class="actions filters" id="dup-filters"></div>
       <div id="dup-groups"></div>
+    </section>
+
+    <!-- التصنيف -->
+    <section data-screen="classify" hidden>
+      <div class="head">
+        <div><h1>التصنيف على الإطار</h1><p class="sub">اسحب السؤال إلى المؤشر، أو اضغط اقتراحًا. المؤشرات من الإطار المستورد فقط ولا تُنشأ من هنا. الاقتراحات الحالية نصية مؤقتة حتى تشغيل النموذج المحلي، ولا تُطبَّق تلقائيًا.</p></div>
+      </div>
+      <div class="panel" style="margin-bottom:16px">
+        <div class="actions">
+          <label class="field" style="margin:0">الإطار: <select id="fw-select"></select></label>
+          <span class="muted" id="fw-stats"></span>
+        </div>
+        <details style="margin-top:10px">
+          <summary>استيراد إطار من Excel</summary>
+          <form id="fw-import" class="field">
+            <input type="file" id="fw-file" accept=".xlsx" required>
+            <input id="fw-name" placeholder="اسم الإطار" required>
+            <input id="fw-version" placeholder="الإصدار" required size="8">
+            <button class="btn primary" type="submit">استيراد</button>
+          </form>
+          <div id="fw-import-result"></div>
+        </details>
+      </div>
+      <div class="split">
+        <div class="panel"><h2>أسئلة بلا مؤشر</h2><div id="cl-questions" class="qlist"></div></div>
+        <div class="panel"><h2 id="fw-title">الإطار</h2><div id="fw-tree"></div></div>
+      </div>
     </section>
 
     <!-- مجلد الشبكة -->

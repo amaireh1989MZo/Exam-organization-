@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using QuestionBank.Core.Export;
 using QuestionBank.Core.Extraction;
+using QuestionBank.Core.Frameworks;
 using QuestionBank.Core.Inventory;
 using QuestionBank.Core.Quality;
 using QuestionBank.Core.Review;
@@ -19,6 +20,8 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<ExportRecord> Exports => Set<ExportRecord>();
     public DbSet<QuestionBand> QuestionBands => Set<QuestionBand>();
     public DbSet<ColumnTemplate> ColumnTemplates => Set<ColumnTemplate>();
+    public DbSet<CompetencyFramework> Frameworks => Set<CompetencyFramework>();
+    public DbSet<CompetencyIndicator> Indicators => Set<CompetencyIndicator>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -72,6 +75,11 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.ReaderName).HasMaxLength(32);
             e.Property(x => x.ReaderVersion).HasMaxLength(16);
             e.Property(x => x.ReviewedBy).HasMaxLength(256);
+            e.Property(x => x.MatchStatus).HasConversion<string>().HasMaxLength(16);
+            e.Property(x => x.MatchMethod).HasMaxLength(32);
+            e.Property(x => x.MatchedBy).HasMaxLength(256);
+            e.HasIndex(x => x.IndicatorId);
+            e.HasOne<CompetencyIndicator>().WithMany().HasForeignKey(x => x.IndicatorId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.StemHash).HasMaxLength(32);
             e.Property(x => x.FullHash).HasMaxLength(32);
             e.HasIndex(x => x.StemHash);
@@ -118,6 +126,27 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.HasIndex(x => new { x.Band, x.Key });
             e.HasIndex(x => x.QuestionId);
             e.HasOne<Question>().WithMany().HasForeignKey(x => x.QuestionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CompetencyFramework>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Version).HasMaxLength(100).IsRequired();
+            e.Property(x => x.SourceName).HasMaxLength(255).IsRequired();
+            e.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ImportedBy).HasMaxLength(256).IsRequired();
+            e.HasIndex(x => new { x.Name, x.Version }).IsUnique();
+        });
+
+        modelBuilder.Entity<CompetencyIndicator>(e =>
+        {
+            e.Property(x => x.MainDomain).HasMaxLength(500).IsRequired();
+            e.Property(x => x.SubDomain).HasMaxLength(500);
+            e.Property(x => x.Code).HasMaxLength(200);
+            e.Property(x => x.Name).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.SourceRow).HasMaxLength(50).IsRequired();
+            e.HasIndex(x => new { x.FrameworkId, x.Order });
+            e.HasOne<CompetencyFramework>().WithMany().HasForeignKey(x => x.FrameworkId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ColumnTemplate>(e =>

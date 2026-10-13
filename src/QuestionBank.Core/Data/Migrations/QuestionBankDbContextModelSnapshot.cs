@@ -136,9 +136,15 @@ namespace QuestionBank.Core.Data.Migrations
                     b.Property<DateTime>("ExtractedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("FrameworkId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("FullHash")
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("IndicatorId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("IssuesJson")
                         .HasColumnType("TEXT");
@@ -146,6 +152,25 @@ namespace QuestionBank.Core.Data.Migrations
                     b.Property<string>("Location")
                         .IsRequired()
                         .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MatchMethod")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("MatchScore")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("MatchStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("MatchedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MatchedBy")
+                        .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("OriginalCode")
@@ -208,6 +233,8 @@ namespace QuestionBank.Core.Data.Migrations
                     b.HasIndex("ContentHash");
 
                     b.HasIndex("FullHash");
+
+                    b.HasIndex("IndicatorId");
 
                     b.HasIndex("ReviewStatus");
 
@@ -287,6 +314,90 @@ namespace QuestionBank.Core.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Uploads");
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Frameworks.CompetencyFramework", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("ImportedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ImportedBy")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name", "Version")
+                        .IsUnique();
+
+                    b.ToTable("Frameworks");
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Frameworks.CompetencyIndicator", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FrameworkId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MainDomain")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceRow")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubDomain")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FrameworkId", "Order");
+
+                    b.ToTable("Indicators");
                 });
 
             modelBuilder.Entity("QuestionBank.Core.Inventory.ProcessingQueueItem", b =>
@@ -557,6 +668,11 @@ namespace QuestionBank.Core.Data.Migrations
 
             modelBuilder.Entity("QuestionBank.Core.Extraction.Question", b =>
                 {
+                    b.HasOne("QuestionBank.Core.Frameworks.CompetencyIndicator", null)
+                        .WithMany()
+                        .HasForeignKey("IndicatorId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("QuestionBank.Core.Inventory.SourceFile", null)
                         .WithMany()
                         .HasForeignKey("SourceFileId")
@@ -566,6 +682,15 @@ namespace QuestionBank.Core.Data.Migrations
                         .WithMany()
                         .HasForeignKey("UploadId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Frameworks.CompetencyIndicator", b =>
+                {
+                    b.HasOne("QuestionBank.Core.Frameworks.CompetencyFramework", null)
+                        .WithMany()
+                        .HasForeignKey("FrameworkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("QuestionBank.Core.Inventory.ScanDirectory", b =>

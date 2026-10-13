@@ -48,7 +48,7 @@ public sealed class ExportService(
     public const int MaxQuestionsPerExport = 5000;
 
     private sealed record Row(long Id, string StableKey, string? Code, string Text, string[] Options, int? Answer,
-        QuestionReviewStatus Status, string Source, string Location);
+        QuestionReviewStatus Status, string Source, string Location, string? IndicatorCategory = null, string? IndicatorCode = null);
 
     public async Task<ExportResult> ExportAsync(ExportRequest request, string user, CancellationToken cancellationToken)
     {
@@ -68,6 +68,9 @@ public sealed class ExportService(
             {
                 q.Id, q.StableKey, q.OriginalCode, q.OriginalText, q.OriginalOptionsJson, q.OriginalCorrectIndex, q.CorrectedIndex,
                 q.ReviewStatus, q.Location,
+                Indicator = db.Indicators.Where(i => i.Id == q.IndicatorId)
+                    .Select(i => new { i.Code, i.Name, i.MainDomain, i.SubDomain, F = db.Frameworks.Where(f => f.Id == i.FrameworkId).Select(f => f.Name + " " + f.Version).FirstOrDefault() })
+                    .FirstOrDefault(),
                 File = db.SourceFiles.Where(f => f.Id == q.SourceFileId).Select(f => f.RelativePath).FirstOrDefault(),
                 Upload = db.Uploads.Where(u => u.Id == q.UploadId).Select(u => u.ClientPath ?? u.OriginalName).FirstOrDefault()
             })
@@ -85,8 +88,12 @@ public sealed class ExportService(
             if (answer is null || answer < 0 || answer >= options.Length) { rejected.Add(new(id, "بلا إجابة صحيحة")); continue; }
             if (options.Length < 2 || options.Any(string.IsNullOrWhiteSpace) || string.IsNullOrWhiteSpace(r.OriginalText))
             { rejected.Add(new(id, "بنية ناقصة")); continue; }
+            // فئة Moodle حسب المؤشر: الإطار وإصداره، ثم المجال، ثم الفرعي، ثم المؤشر (الرمز إن وُجد).
+            var category = r.Indicator is { } ind
+                ? string.Join("/", new[] { ind.F, ind.MainDomain, ind.SubDomain, ind.Code ?? ind.Name }.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Replace('/', '∕')))
+                : null;
             rows.Add(new Row(r.Id, r.StableKey, r.OriginalCode, r.OriginalText, options, answer, r.ReviewStatus,
-                r.File ?? ("رفع يدوي/" + r.Upload), r.Location));
+                r.File ?? ("رفع يدوي/" + r.Upload), r.Location, category, r.Indicator?.Code));
         }
         if (rows.Count == 0)
             return new ExportResult(null, null, 0, rejected, "NothingToExport");
@@ -194,12 +201,13 @@ public sealed class ExportService(
     {
         var quiz = new XElement("quiz");
         string? lastCategory = null;
-        IEnumerable<Row> ordered = categoryBySource ? rows.OrderBy(r => Folder(r.Source), StringComparer.Ordinal) : rows;
+        string CategoryOf(Row r) => r.IndicatorCategory ?? "بلا مؤشر/" + Folder(r.Source);
+        IEnumerable<Row> ordered = categoryBySource ? rows.OrderBy(CategoryOf, StringComparer.Ordinal) : rows;
         foreach (var r in ordered)
         {
             if (categoryBySource)
             {
-                var category = "$course$/top/بنك الأسئلة/" + Folder(r.Source);
+                var category = "$course$/top/بنك الأسئلة/" + CategoryOf(r);
                 if (category != lastCategory)
                 {
                     quiz.Add(new XElement("question", new XAttribute("type", "category"),
@@ -224,7 +232,9 @@ public sealed class ExportService(
                     new XAttribute("fraction", i == r.Answer ? "100" : "0"), new XAttribute("format", "html"),
                     new XElement("text", new XCData(Rtl(o))),
                     new XElement("feedback", new XAttribute("format", "html"), new XElement("text", "")))),
-                new XElement("tags", new XElement("tag", new XElement("text", "source:" + Folder(r.Source))))));
+                new XElement("tags",
+                    new XElement("tag", new XElement("text", "source:" + Folder(r.Source))),
+                    r.IndicatorCode is null ? null : new XElement("tag", new XElement("text", "indicator:" + r.IndicatorCode)))));
         }
         var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), quiz);
         return doc.Declaration + "\n" + doc.Root!.ToString() + "\n";

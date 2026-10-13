@@ -54,6 +54,7 @@ function show(view) {
   if (view === 'review') loadReview(true);
   if (view === 'export') loadExport();
   if (view === 'dups') loadDups();
+  if (view === 'classify') loadFrameworks();
 }
 $$('.nav[data-view]').forEach(n => n.addEventListener('click', () => show(n.dataset.view)));
 
@@ -826,7 +827,103 @@ async function loadDups() {
   });
 }
 
+/* ---------- classification ---------- */
+let fwId = null;
+let selectedQuestion = null;
+
+async function loadFrameworks() {
+  let list;
+  try { list = await api('GET', '/api/frameworks'); } catch { return; }
+  const sel = $('#fw-select');
+  sel.replaceChildren(...list.map(f => el('option', { value: f.id, textContent: `${f.name} · ${f.version} (${fmt(f.indicatorCount)} مؤشر)` })));
+  if (!list.length) {
+    $('#fw-tree').replaceChildren(el('div', { className: 'muted', textContent: 'لا يوجد إطار مستورد بعد. استورد ملف الإطار من الأعلى.' }));
+    $('#cl-questions').replaceChildren();
+    $('#fw-stats').textContent = '';
+    return;
+  }
+  if (!list.some(f => f.id === fwId)) fwId = list[0].id;
+  sel.value = fwId;
+  await loadClassify();
+}
+$('#fw-select').onchange = e => { fwId = Number(e.target.value); loadClassify(); };
+
+async function loadClassify() {
+  let tree, items;
+  try {
+    [tree, items] = await Promise.all([api('GET', `/api/frameworks/${fwId}/tree`), api('GET', `/api/frameworks/${fwId}/unclassified?take=100`)]);
+  } catch { return; }
+  $('#fw-title').textContent = `${tree.framework.name} · إصدار ${tree.framework.version}`;
+  $('#fw-stats').textContent = `${fmt(tree.classifiedQuestions)} سؤال مصنّف · ${fmt(tree.indicatorsWithoutQuestions)} مؤشر بلا أسئلة`;
+
+  const qbox = $('#cl-questions');
+  qbox.replaceChildren(...items.map(q => {
+    const card = el('div', { className: 'qcard' + (selectedQuestion === q.id ? ' sel' : ''), draggable: true },
+      el('span', { className: 't', textContent: q.text }), el('span', { className: 'm' }, el('bdi', { textContent: q.source })));
+    const sugg = el('div', { className: 'sugg' }, el('span', { className: 'm', textContent: q.suggestions.length ? 'اقتراح نصي:' : 'لا اقتراح' }));
+    q.suggestions.forEach(s => {
+      const b = el('button', { className: 'sbtn', type: 'button', title: `${s.name}\n${s.rationale}` },
+        el('span', { className: 'mono', textContent: s.code || '—' }), el('span', { className: 'muted', textContent: Math.round(s.score * 100) + '%' }));
+      b.onclick = e => { e.stopPropagation(); classify(q.id, s.indicatorId, s.method, s.score); };
+      sugg.append(b);
+    });
+    card.append(sugg);
+    card.addEventListener('dragstart', e => e.dataTransfer.setData('text/x-qb-classify', String(q.id)));
+    card.onclick = () => { selectedQuestion = selectedQuestion === q.id ? null : q.id; loadClassify(); };
+    return card;
+  }));
+  if (!items.length) qbox.append(el('div', { className: 'empty', textContent: 'كل الأسئلة مصنّفة.' }));
+
+  const tbox = $('#fw-tree');
+  tbox.replaceChildren();
+  for (const d of tree.domains) {
+    tbox.append(el('div', { className: 'dom', textContent: d.name }));
+    for (const s of d.subs) {
+      if (s.name) tbox.append(el('div', { className: 'subd', textContent: s.name }));
+      for (const i of s.indicators) {
+        const row = el('div', { className: 'ind' },
+          el('span', {}, i.code ? el('span', { className: 'code', textContent: i.code + ' ' }) : '', i.name),
+          el('span', { className: 'cnt' + (i.questions ? '' : ' zero'), title: i.questions ? '' : 'مؤشر بلا أسئلة', textContent: fmt(i.questions) }));
+        ['dragenter', 'dragover'].forEach(t => row.addEventListener(t, e => { if (e.dataTransfer.types.includes('text/x-qb-classify')) { e.preventDefault(); row.classList.add('over'); } }));
+        row.addEventListener('dragleave', () => row.classList.remove('over'));
+        row.addEventListener('drop', e => { e.preventDefault(); row.classList.remove('over'); classify(Number(e.dataTransfer.getData('text/x-qb-classify')), i.id, 'manual', null); });
+        row.onclick = () => { if (selectedQuestion) { const q = selectedQuestion; selectedQuestion = null; classify(q, i.id, 'manual', null); } };
+        tbox.append(row);
+      }
+    }
+  }
+}
+
+async function classify(questionId, indicatorId, method, score) {
+  try {
+    await api('POST', `/api/classify/${questionId}`, { indicatorId, method, score });
+    toast('رُبط السؤال بالمؤشر.', () => api('POST', `/api/classify/${questionId}`, { indicatorId: null }).then(loadClassify));
+    await loadClassify();
+  } catch (e) { toast(e.message); }
+}
+
+$('#fw-import').addEventListener('submit', async e => {
+  e.preventDefault();
+  const box = $('#fw-import-result');
+  box.replaceChildren();
+  const form = new FormData();
+  form.append('file', $('#fw-file').files[0]);
+  form.append('name', $('#fw-name').value);
+  form.append('version', $('#fw-version').value);
+  const res = await fetch('/api/frameworks', { method: 'POST', body: form, credentials: 'same-origin', headers: { 'X-QB-Client': 'web' } });
+  let data = null;
+  try { data = await res.json(); } catch { /* ignore */ }
+  if (res.status === 403) { box.append(el('div', { className: 'result bad', textContent: 'الاستيراد لمدير النظام ومسؤول البنك فقط.' })); return; }
+  if (!res.ok) {
+    box.append(el('div', { className: 'result bad', textContent: (data?.errors || ['تعذّر الاستيراد.']).join(' · ') }));
+    return;
+  }
+  box.append(el('div', { className: 'result', textContent: `استُورد ${fmt(data.framework.indicatorCount)} مؤشر.` + (data.warnings.length ? ' ملاحظات: ' + data.warnings.join(' · ') : '') }));
+  fwId = data.framework.id;
+  loadFrameworks();
+});
+
 /* ---------- start ---------- */
 loadMe();
 loadQueue();
-show(['dash', 'folders', 'drop', 'review', 'export', 'dups'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');
+show(['dash', 'folders', 'drop', 'review', 'export', 'dups', 'classify'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dash');

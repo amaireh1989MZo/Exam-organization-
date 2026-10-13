@@ -96,6 +96,9 @@ public sealed class SecurityTests : IDisposable
     [InlineData("POST", "/api/reports/excel")]
     [InlineData("GET", "/api/quality/duplicates")]
     [InlineData("GET", "/api/templates")]
+    [InlineData("GET", "/api/frameworks")]
+    [InlineData("POST", "/api/frameworks")]
+    [InlineData("POST", "/api/classify/1")]
     [InlineData("POST", "/api/templates")]
     [InlineData("GET", "/api/uploads/1/preview")]
     public async Task EveryOtherEndpoint_RequiresWindowsAuthentication(string method, string url)
@@ -130,6 +133,8 @@ public sealed class SecurityTests : IDisposable
     [InlineData("CORP\\QB-Viewers", "/api/quality/duplicates", HttpStatusCode.Forbidden)]
     [InlineData("CORP\\QB-Reviewers", "/api/templates", HttpStatusCode.Forbidden)]
     [InlineData("CORP\\QB-BankManagers", "/api/templates", HttpStatusCode.OK)]
+    [InlineData("CORP\\QB-Reviewers", "/api/frameworks", HttpStatusCode.OK)]
+    [InlineData("CORP\\QB-Viewers", "/api/frameworks", HttpStatusCode.Forbidden)]
     [InlineData("CORP\\QB-Reviewers", "/api/reports/report-20261013-000000-abcdef.xlsx", HttpStatusCode.Forbidden)]
     public async Task Roles_FollowConfiguredAdGroups(string group, string url, HttpStatusCode expected)
     {
@@ -147,6 +152,8 @@ public sealed class SecurityTests : IDisposable
     [InlineData("/api/exports")]
     [InlineData("/api/reports/excel")]
     [InlineData("/api/templates")]
+    [InlineData("/api/frameworks")]
+    [InlineData("/api/classify/1")]
     public async Task StateChangingRequests_WithoutClientHeader_AreRejected_EvenWhenAuthorized(string url)
     {
         var client = Client(testAuth: true);

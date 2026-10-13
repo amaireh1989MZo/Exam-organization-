@@ -1,0 +1,588 @@
+<meta charset="utf-8">
+<title>بنك الأسئلة الداخلي</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: right-side rail (RTL) + working canvas; each screen is one job. Archive-ledger feel: pine ink on cool paper, amber marks attention. */
+:root{
+  --bg:#F3F5F4; --surface:#FFFFFF; --sunk:#E8ECEA; --line:#D3DAD7;
+  --fg:#17221F; --muted:#5B6A65; --accent:#1F5C50; --accent-ink:#FFFFFF; --accent-soft:#DCEBE6;
+  --amber:#B86E00; --amber-soft:#FBEBD0; --ok:#1E7A46; --ok-soft:#DDF1E4; --bad:#B3261E; --bad-soft:#F9DEDC;
+  --drop:#EAF4F0;
+  --f-display:"Readex Pro","IBM Plex Sans Arabic",Tahoma,sans-serif;
+  --f-body:"IBM Plex Sans Arabic",Tahoma,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101614; --surface:#18201D; --sunk:#0C1110; --line:#2B3632;
+  --fg:#E5ECE9; --muted:#97A6A0; --accent:#5FB8A3; --accent-ink:#06201A; --accent-soft:#1D3B34;
+  --amber:#F0A63A; --amber-soft:#3A2A10; --ok:#5CC98A; --ok-soft:#173424; --bad:#F2867D; --bad-soft:#3D1A17;
+  --drop:#15302A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101614; --surface:#18201D; --sunk:#0C1110; --line:#2B3632;
+  --fg:#E5ECE9; --muted:#97A6A0; --accent:#5FB8A3; --accent-ink:#06201A; --accent-soft:#1D3B34;
+  --amber:#F0A63A; --amber-soft:#3A2A10; --ok:#5CC98A; --ok-soft:#173424; --bad:#F2867D; --bad-soft:#3D1A17;
+  --drop:#15302A; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.6;direction:rtl}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app{display:grid;grid-template-columns:240px 1fr;min-height:100%}
+.rail{background:var(--surface);border-inline-start:1px solid var(--line);padding:20px 14px;display:flex;flex-direction:column;gap:6px;position:sticky;top:env(safe-area-inset-top,0px);height:100vh}
+.brand{font-family:var(--f-display);font-weight:700;font-size:18px;padding:4px 10px 14px;display:flex;align-items:center;gap:10px}
+.brand i{width:28px;height:28px;border-radius:7px;background:var(--accent);display:grid;place-items:center;color:var(--accent-ink);font-style:normal;font-size:15px}
+.nav{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-radius:8px;color:var(--muted);font-weight:500}
+.nav:hover{background:var(--sunk);color:var(--fg)}
+.nav[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav .n{font-family:var(--f-mono);font-size:12px;background:var(--sunk);padding:0 7px;border-radius:99px;color:var(--muted)}
+.rail .who{margin-top:auto;font-size:13px;color:var(--muted);padding:10px;border-top:1px solid var(--line)}
+.rail .who b{color:var(--fg);display:block;font-weight:600}
+main{padding-block:26px 60px;padding-inline:32px;min-width:0;max-width:1180px;width:100%}
+.head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px;margin-bottom:20px}
+h1{font-family:var(--f-display);font-size:26px;margin:0;text-wrap:balance;font-weight:600}
+.sub{color:var(--muted);margin:4px 0 0;max-width:65ch}
+h2{font-family:var(--f-display);font-size:17px;margin:0 0 10px;font-weight:600}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+.btn{cursor:pointer;border:1px solid var(--line);background:var(--surface);padding:7px 14px;border-radius:8px;font-weight:500}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.sm{padding:3px 10px;font-size:13px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;padding:1px 9px;border-radius:99px;font-weight:500;white-space:nowrap}
+.chip.wait{background:var(--sunk);color:var(--muted)}.chip.run{background:var(--accent-soft);color:var(--accent)}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}.chip.warn{background:var(--amber-soft);color:var(--amber)}.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
+.dot.g{background:var(--ok)}.dot.y{background:var(--amber)}.dot.r{background:var(--bad)}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.tag-ex{font-size:12px;color:var(--amber);background:var(--amber-soft);padding:2px 10px;border-radius:99px}
+
+/* stats */
+.stat .k{font-size:13px;color:var(--muted)}
+.stat .v{font-family:var(--f-display);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
+.stat .s{font-size:12.5px;color:var(--muted)}
+.bar{height:8px;background:var(--sunk);border-radius:99px;overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .4s}
+.fmt{display:grid;grid-template-columns:70px 1fr 64px;gap:10px;align-items:center;font-size:13.5px;margin-bottom:9px}
+
+/* drop zone */
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:44px 20px;text-align:center;background:var(--surface);transition:background .15s,border-color .15s;cursor:pointer}
+.drop.over{background:var(--drop);border-color:var(--accent)}
+.drop .big{font-family:var(--f-display);font-size:22px;font-weight:600}
+.drop svg{width:52px;height:52px;color:var(--accent);margin-bottom:8px}
+.files{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.file{display:grid;grid-template-columns:36px 1fr auto;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.ext{font-family:var(--f-mono);font-size:11px;font-weight:500;background:var(--sunk);border-radius:6px;padding:6px 0;text-align:center;text-transform:uppercase}
+.file .nm{font-weight:500;overflow-wrap:anywhere}
+.file .meta{font-size:12.5px;color:var(--muted)}
+
+/* tree */
+.tree{list-style:none;margin:0;padding:0}
+.tree li{margin:0}
+.node{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:grab;user-select:none}
+.node:hover{background:var(--sunk)}
+.node .c{margin-inline-start:auto;font-size:12.5px;color:var(--muted)}
+.tree .tree{padding-inline-start:20px;border-inline-start:1px solid var(--line);margin-inline-start:12px}
+.queue{min-height:220px;border:2px dashed var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.queue.over{background:var(--drop);border-color:var(--accent)}
+.qitem{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:10px 12px;display:grid;gap:6px}
+.qitem .row{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.empty{color:var(--muted);text-align:center;margin:auto;font-size:14px;padding:20px}
+
+/* mapping */
+.cols{display:flex;flex-wrap:wrap;gap:8px;min-height:44px;padding:10px;background:var(--sunk);border-radius:10px}
+.colchip{cursor:grab;background:var(--surface);border:1px solid var(--line);padding:5px 12px;border-radius:8px;font-weight:500;font-size:14px}
+.colchip:active{cursor:grabbing}
+.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.slot{border:2px dashed var(--line);border-radius:10px;padding:10px;min-height:76px;display:flex;flex-direction:column;gap:6px}
+.slot.over{border-color:var(--accent);background:var(--drop)}
+.slot.filled{border-style:solid;border-color:var(--accent);background:var(--accent-soft)}
+.slot .lbl{font-size:12.5px;color:var(--muted);font-weight:600}
+.slot.req .lbl::after{content:" *";color:var(--bad)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:start;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--sunk);font-weight:600;font-size:12.5px;color:var(--muted);white-space:nowrap}
+
+/* review */
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px;align-items:start}
+.qlist{display:flex;flex-direction:column;gap:6px;max-height:640px;overflow:auto;padding:2px}
+.qrow{all:unset;cursor:pointer;display:grid;grid-template-columns:10px 1fr;gap:10px;align-items:start;padding:10px 12px;border-radius:9px;border:1px solid transparent}
+.qrow:hover{background:var(--sunk)}
+.qrow[aria-selected="true"]{background:var(--surface);border-color:var(--accent)}
+.qrow .dot{margin-top:7px}
+.qrow .t{font-size:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.qrow .m{font-size:12px;color:var(--muted)}
+.src{background:var(--sunk);border-radius:9px;padding:12px 14px;font-size:13.5px;color:var(--muted);white-space:pre-wrap}
+.src mark{background:var(--amber-soft);color:var(--fg);border-radius:3px;padding:0 2px}
+.opts{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.opt{all:unset;cursor:pointer;display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:8px;border:1px solid var(--line)}
+.opt:hover{border-color:var(--accent)}
+.opt.correct{border-color:var(--ok);background:var(--ok-soft)}
+.opt .L{font-family:var(--f-display);font-weight:600;width:22px;height:22px;display:grid;place-items:center;border-radius:6px;background:var(--sunk);font-size:13px}
+.opt.correct .L{background:var(--ok);color:var(--surface)}
+.issues{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.issue{font-size:13.5px;display:flex;gap:8px;align-items:center}
+.kbd{font-family:var(--f-mono);font-size:11.5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 6px;background:var(--surface);color:var(--fg)}
+.btn.primary .kbd{background:transparent;color:inherit;border-color:currentColor}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+
+/* classify */
+.qcard{cursor:grab;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px;display:grid;gap:6px}
+.qcard.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.sugg{display:flex;flex-wrap:wrap;gap:6px}
+.sbtn{all:unset;cursor:pointer;font-size:12px;border:1px solid var(--line);border-radius:7px;padding:1px 8px;display:inline-flex;gap:6px;align-items:center}
+.sbtn:hover{border-color:var(--accent);color:var(--accent)}
+.fw .dom{font-family:var(--f-display);font-weight:600;font-size:14.5px;margin:12px 0 6px}
+.fw .subd{font-size:13px;color:var(--muted);margin:6px 0 4px;font-weight:600}
+.ind{border:1px dashed var(--line);border-radius:9px;padding:8px 10px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;align-items:center;transition:background .12s}
+.ind.over{background:var(--drop);border-color:var(--accent);border-style:solid}
+.ind .code{font-family:var(--f-mono);font-size:12px;color:var(--accent)}
+.ind .cnt{font-family:var(--f-mono);font-size:12px;background:var(--sunk);border-radius:99px;padding:0 8px}
+.ind .cnt.zero{background:var(--bad-soft);color:var(--bad)}
+
+/* export */
+.basket{min-height:180px;border:2px dashed var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.basket.over{background:var(--drop);border-color:var(--accent)}
+.bitem{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:13.5px;background:var(--bg);border-radius:8px;padding:6px 10px}
+textarea.gift{width:100%;min-height:260px;font-family:var(--f-mono);font-size:12.5px;direction:ltr;text-align:left;background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:12px;resize:vertical}
+
+/* ideas */
+.ideas{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.idea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
+.idea b{font-family:var(--f-display);font-weight:600;display:block;margin-bottom:4px}
+.idea p{margin:0;font-size:13.5px;color:var(--muted)}
+
+.toast{position:fixed;inset-inline-start:50%;transform:translateX(50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;display:flex;gap:14px;align-items:center;font-size:14px;z-index:9;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.toast button{all:unset;cursor:pointer;font-weight:700;color:var(--accent-soft)}
+.mobile-tip{display:none}
+@media (max-width:900px){
+  .app{grid-template-columns:1fr}
+  .rail{position:static;height:auto;flex-direction:row;overflow-x:auto;padding:10px 16px;border-inline-start:0;border-bottom:1px solid var(--line)}
+  .brand{display:none}.rail .who{display:none}
+  .nav{white-space:nowrap}
+  main{padding-inline:16px}
+  .g2,.g3,.split{grid-template-columns:1fr}
+  .g4{grid-template-columns:1fr 1fr}
+  .mobile-tip{display:block}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="app">
+  <nav class="rail" aria-label="الأقسام">
+    <div class="brand"><i>ب</i>بنك الأسئلة</div>
+    <button class="nav" data-view="dash">لوحة الحالة</button>
+    <button class="nav" data-view="drop">إسقاط الملفات <span class="n" id="n-drop">0</span></button>
+    <button class="nav" data-view="share">مجلد الشبكة</button>
+    <button class="nav" data-view="map">مطابقة الأعمدة</button>
+    <button class="nav" data-view="review">المراجعة <span class="n" id="n-review">0</span></button>
+    <button class="nav" data-view="classify">التصنيف <span class="n" id="n-cls">0</span></button>
+    <button class="nav" data-view="export">سلة التصدير <span class="n" id="n-bask">0</span></button>
+    <button class="nav" data-view="ideas">أفكار إضافية</button>
+    <div class="who"><b>م. أحمد (مراجع فني)</b>دخول تلقائي بحساب الشبكة</div>
+  </nav>
+
+  <main id="main">
+
+  <!-- DASHBOARD -->
+  <section data-screen="dash">
+    <div class="head"><div><h1>لوحة الحالة</h1><p class="sub">صورة سريعة عن تقدم الجرد والاستخراج والمراجعة.</p></div><span class="tag-ex">نموذج تجريبي ببيانات وهمية</span></div>
+    <div class="grid g4">
+      <div class="panel stat"><div class="k">ملفات مكتشفة</div><div class="v">78,554</div><div class="s">في 23,173 مجلدًا</div></div>
+      <div class="panel stat"><div class="k">عولجت</div><div class="v">12,310</div><div class="bar" style="margin-top:8px"><span style="width:15.7%"></span></div><div class="s">15.7% · المتبقي نحو 9 أيام</div></div>
+      <div class="panel stat"><div class="k">أسئلة مستخرجة</div><div class="v">146,882</div><div class="s">متوسط 11.9 سؤال لكل ملف</div></div>
+      <div class="panel stat"><div class="k">تحتاج مراجعة</div><div class="v" style="color:var(--amber)">8,417</div><div class="s">ثقة منخفضة أو إجابة غير محددة</div></div>
+    </div>
+    <div class="grid g2" style="margin-top:16px">
+      <div class="panel">
+        <h2>الصيغ في المجلد</h2>
+        <div id="fmts"></div>
+      </div>
+      <div class="panel">
+        <h2>حالات الملفات</h2>
+        <table><tbody>
+          <tr><td><span class="chip ok">مكتمل</span></td><td class="mono">11,402</td><td class="muted">استُخرجت أسئلته</td></tr>
+          <tr><td><span class="chip run">قيد المعالجة</span></td><td class="mono">48</td><td class="muted">الدفعة الحالية</td></tr>
+          <tr><td><span class="chip warn">يحتاج مراجعة</span></td><td class="mono">611</td><td class="muted">بنية غير واضحة</td></tr>
+          <tr><td><span class="chip bad">فشل</span></td><td class="mono">297</td><td class="muted">محمي بكلمة مرور، تالف، مقفل</td></tr>
+          <tr><td><span class="chip wait">تم تخطيه</span></td><td class="mono">1,203</td><td class="muted">ليس ملف أسئلة (صور، اختصارات)</td></tr>
+          <tr><td><span class="chip wait">بالانتظار</span></td><td class="mono">64,993</td><td class="muted">سيُعالج بالترتيب</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- DROP -->
+  <section data-screen="drop" hidden>
+    <div class="head"><div><h1>إسقاط الملفات</h1><p class="sub">اسحب ملفات أو مجلدًا كاملًا أو ملف ZIP. ملفات TXT وGIFT تُقرأ فعلًا داخل هذا النموذج، وباقي الصيغ محاكاة.</p></div></div>
+    <label class="drop" id="dropzone" for="picker">
+      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M24 31V9"/><path d="m15 18 9-9 9 9"/><path d="M8 30v7a3 3 0 0 0 3 3h26a3 3 0 0 0 3-3v-7"/></svg>
+      <div class="big">اسحب ملفاتك أو مجلدًا هنا</div>
+      <div class="muted">أو اضغط للاختيار · DOCX · XLSX · PDF · DOC · TXT · GIFT · ZIP</div>
+    </label>
+    <input type="file" id="picker" multiple hidden>
+    <div class="actions"><button class="btn sm" id="demoFiles">جرّب بملفات وهمية</button></div>
+    <div class="files" id="fileList"></div>
+  </section>
+
+  <!-- SHARE -->
+  <section data-screen="share" hidden>
+    <div class="head"><div><h1>مجلد الشبكة</h1><p class="sub">الملفات تبقى في مكانها على الخادم. اسحب أي مجلد إلى قائمة المعالجة، ولن يُرفع أي شيء.</p></div></div>
+    <p class="mobile-tip muted">على الجوال: اضغط على المجلد لإضافته.</p>
+    <div class="grid g2">
+      <div class="panel"><h2>بنك الأسئلة (للقراءة فقط)</h2><ul class="tree" id="tree"></ul></div>
+      <div class="panel"><h2>قائمة المعالجة</h2><div class="queue" id="queue"><div class="empty" id="qEmpty">أفلت مجلدًا هنا لبدء المعالجة</div></div></div>
+    </div>
+  </section>
+
+  <!-- MAP -->
+  <section data-screen="map" hidden>
+    <div class="head"><div><h1>مطابقة الأعمدة</h1><p class="sub">ملف Excel جديد: <b>اختبار-محاسب-2024.xlsx</b>. اسحب كل عمود إلى معناه مرة واحدة، والنظام يتذكر القالب للملفات المشابهة.</p></div><span class="chip warn">قالب جديد</span></div>
+    <div class="panel">
+      <h2>أعمدة الملف</h2>
+      <div class="cols" id="cols"></div>
+      <h2 style="margin-top:18px">الحقول</h2>
+      <div class="slots" id="slots"></div>
+      <div class="actions"><button class="btn primary" id="saveTpl">حفظ القالب واستخراج 214 سؤالًا</button><button class="btn" id="autoMap">اقترح المطابقة تلقائيًا</button><button class="btn" id="resetMap">إعادة</button></div>
+    </div>
+    <div class="panel" style="margin-top:16px"><h2>معاينة أول 3 صفوف</h2><div class="tablewrap"><table id="mapPreview"></table></div></div>
+  </section>
+
+  <!-- REVIEW -->
+  <section data-screen="review" hidden>
+    <div class="head"><div><h1>المراجعة</h1><p class="sub">السؤال يمينًا ومصدره أسفله. اضغط على خيار لتعيينه إجابة صحيحة. التصحيح يُحفظ كطبقة فوق الأصل، والملف الأصلي لا يتغير.</p></div>
+      <div class="muted" style="font-size:13px"><span class="kbd">J</span> / <span class="kbd">K</span> تنقل · <span class="kbd">A</span> اعتماد · <span class="kbd">F</span> تعليم</div></div>
+    <div class="split">
+      <div class="panel"><div class="actions" style="margin:0 0 10px" id="rvFilter"></div><div class="qlist" id="qlist" role="listbox" aria-label="الأسئلة"></div></div>
+      <div class="panel" id="qdetail"></div>
+    </div>
+  </section>
+
+  <!-- CLASSIFY -->
+  <section data-screen="classify" hidden>
+    <div class="head"><div><h1>التصنيف على الإطار</h1><p class="sub">اسحب السؤال وأفلته على المؤشر، أو اضغط أحد اقتراحات النموذج المحلي. المؤشرات تأتي من الإطار المعتمد فقط ولا يمكن إنشاؤها من هنا.</p></div></div>
+    <p class="mobile-tip muted">على الجوال: اضغط السؤال لتحديده، ثم اضغط المؤشر.</p>
+    <div class="split">
+      <div class="panel"><h2>أسئلة بلا مؤشر</h2><div class="grid" id="unclassified" style="gap:8px"></div></div>
+      <div class="panel fw"><h2>إطار وظيفة إدارية · إصدار 2.1</h2><div id="framework"></div></div>
+    </div>
+  </section>
+
+  <!-- EXPORT -->
+  <section data-screen="export" hidden>
+    <div class="head"><div><h1>سلة التصدير</h1><p class="sub">اسحب الأسئلة المعتمدة إلى السلة. قبل التصدير يفحص النظام بنية GIFT ويهرّب الرموز الخاصة.</p></div></div>
+    <div class="grid g2">
+      <div class="panel"><h2>أسئلة معتمدة</h2><div class="grid" id="approvedList" style="gap:8px"></div><div class="actions"><button class="btn sm" id="addAll">أضف الكل</button></div></div>
+      <div class="panel"><h2>السلة</h2><div class="basket" id="basket"><div class="empty" id="bEmpty">أفلت الأسئلة هنا</div></div>
+        <div class="actions"><button class="btn primary" id="mkGift">إنشاء GIFT</button><button class="btn" id="mkXlsx">تقرير Excel</button><button class="btn" id="clearB">تفريغ</button></div></div>
+    </div>
+    <div class="panel" style="margin-top:16px" id="giftPanel" hidden>
+      <div class="head" style="margin-bottom:10px"><h2 style="margin:0">ملف GIFT</h2><div class="actions" style="margin:0"><span id="giftReport"></span><button class="btn sm" id="copyGift">نسخ</button></div></div>
+      <textarea class="gift" id="giftOut" readonly aria-label="نص GIFT"></textarea>
+    </div>
+  </section>
+
+  <!-- IDEAS -->
+  <section data-screen="ideas" hidden>
+    <div class="head"><div><h1>أفكار إضافية</h1><p class="sub">ميزات غير مرسومة في هذا النموذج، ومقترحة للمراحل القادمة.</p></div></div>
+    <div class="ideas" id="ideas"></div>
+  </section>
+
+  </main>
+</div>
+<div class="toast" id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">تراجع</button></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const L=['أ','ب','ج','د','هـ','و'];
+
+/* ---------- synthetic data ---------- */
+const FW=[
+ {d:'1. التخطيط والتنظيم',subs:[{s:'1.1 إدارة الأولويات',inds:[['1.1.1','يرتّب المهام حسب الأهمية والإلحاح'],['1.1.2','يوازن بين المهام المتعارضة']]},{s:'1.2 إدارة الوقت',inds:[['1.2.1','يضع جداول زمنية واقعية للمهام']]}]},
+ {d:'2. التواصل',subs:[{s:'2.1 التواصل الكتابي',inds:[['2.1.1','يصوغ المراسلات الرسمية بوضوح وإيجاز']]},{s:'2.2 الإصغاء',inds:[['2.2.1','يتحقق من فهمه لما يقوله الآخرون']]}]},
+ {d:'3. حل المشكلات',subs:[{s:'3.1 تحليل المشكلة',inds:[['3.1.1','يحدد المشكلة وأسبابها بدقة']]},{s:'3.2 اتخاذ القرار',inds:[['3.2.1','يتخذ قرارًا مناسبًا بمعلومات ناقصة']]}]}
+];
+let Q=[
+ {id:'Q-000101',t:'عند تعارض مهمتين لهما موعد التسليم نفسه، ما أول إجراء مناسب؟',o:['تنفيذ المهمة الأسهل أولًا','تقييم أثر كل مهمة ومناقشة الأولوية مع المسؤول','تأجيل المهمتين حتى يتضح الأمر','تفويض المهمتين لزميل'],a:1,src:'إداري/2023/نموذج-أ.docx',pos:'سؤال 3 · صفحة 1',conf:'g',st:'review',ind:null,sg:[['1.1.2',.91],['1.1.1',.77],['3.2.1',.41]],how:'الإجابة بخط عريض'},
+ {id:'Q-000102',t:'أي مما يلي من أساليب إدارة الوقت الفعّالة؟',o:['الرد على كل بريد فور وصوله','تقسيم المهام الكبيرة إلى مراحل لها مواعيد','العمل على عدة مهام في الوقت نفسه','ترك التخطيط لنهاية الأسبوع'],a:1,src:'إداري/2023/نموذج-أ.docx',pos:'سؤال 4 · صفحة 1',conf:'g',st:'review',ind:null,sg:[['1.2.1',.88],['1.1.1',.52]],how:'الإجابة بخط عريض'},
+ {id:'Q-000103',t:'ما الهدف الأساسي من صياغة المذكرة الرسمية بإيجاز؟',o:['إظهار المهارة اللغوية للكاتب','إيصال الفكرة بوضوح وتوفير وقت القارئ','تقليل عدد الصفحات المطبوعة','الالتزام بقالب المؤسسة فقط'],a:1,src:'إداري/2022/تواصل.xlsx',pos:'صف 12',conf:'g',st:'review',ind:null,sg:[['2.1.1',.93]],how:'عمود "الإجابة"'},
+ {id:'Q-000104',t:'في اجتماع عمل، أي سلوك يدل على الإصغاء الفعّال؟',o:['تحضير الرد أثناء حديث الآخر','إعادة صياغة ما قيل للتأكد من الفهم','تدوين كل كلمة حرفيًا','الإيماء دون أي تعليق'],a:1,src:'إداري/2022/تواصل.xlsx',pos:'صف 13',conf:'g',st:'review',ind:null,sg:[['2.2.1',.9]],how:'عمود "الإجابة"'},
+ {id:'Q-000105',t:'الخطوة الأولى في منهجية حل المشكلات هي:',o:['اقتراح الحلول','تحديد المشكلة بدقة','تنفيذ الحل الأسرع','تقييم النتائج'],a:1,src:'إداري/2021/مشكلات.docx',pos:'سؤال 1 · صفحة 2',conf:'y',st:'review',ind:null,sg:[['3.1.1',.86],['3.2.1',.48]],how:'الإجابة ملوّنة بالأحمر (ثقة متوسطة)'},
+ {id:'Q-000106',t:'عند اتخاذ قرار في ظل معلومات ناقصة، فإن الأفضل:',o:['الانتظار حتى تكتمل المعلومات','اتخاذ قرار مؤقت قابل للمراجعة مع توثيق الافتراضات','ترك القرار لجهة أخرى','الاعتماد على الحدس فقط'],a:null,src:'إداري/2021/مشكلات.docx',pos:'سؤال 7 · صفحة 3',conf:'r',st:'review',ind:null,sg:[['3.2.1',.84]],how:'لم يُعثر على علامة للإجابة'},
+ {id:'Q-000107',t:'أول خطوة في منهجية حل المشكلات هي:',o:['اقتراح الحلول','تحديد المشكلة بدقة','تنفيذ الحل الأسرع','تقييم النتائج'],a:1,src:'إداري/2024/مراجعة.txt',pos:'سطر 40',conf:'y',st:'review',ind:null,sg:[['3.1.1',.85]],how:'علامة * قبل الإجابة',dup:['Q-000105',.94]},
+ {id:'Q-000108',t:'أي أداة تساعد على ترتيب المهام حسب الأهمية والإلحاح؟',o:['مخطط جانت','مصفوفة أيزنهاور','خريطة ذهنية','قائمة مراجعة'],a:1,src:'إداري/2024/اختبار-محاسب.xlsx',pos:'صف 5',conf:'g',st:'approved',ind:'1.1.1',sg:[['1.1.1',.95]],how:'عمود "الإجابة"'},
+];
+let basket=[];
+
+/* ---------- nav ---------- */
+function show(v){
+  $$('[data-screen]').forEach(s=>s.hidden=s.dataset.screen!==v);
+  $$('.nav').forEach(n=>{if(n.dataset.view===v)n.setAttribute('aria-current','page');else n.removeAttribute('aria-current')});
+  try{localStorage.setItem('qb-view',v)}catch(e){}
+  ({review:renderReview,classify:renderClassify,export:renderExport})[v]?.();
+}
+$$('.nav').forEach(n=>n.onclick=()=>show(n.dataset.view));
+
+/* ---------- toast with undo ---------- */
+let undoFn=null,tt;
+function toast(msg,undo){
+  $('#toastMsg').textContent=msg;undoFn=undo||null;$('#toastUndo').hidden=!undo;$('#toast').hidden=false;
+  clearTimeout(tt);tt=setTimeout(()=>$('#toast').hidden=true,5000);
+}
+$('#toastUndo').onclick=()=>{undoFn&&undoFn();$('#toast').hidden=true;refreshCounts()};
+
+function refreshCounts(){
+  $('#n-review').textContent=Q.filter(q=>q.st==='review').length;
+  $('#n-cls').textContent=Q.filter(q=>!q.ind).length;
+  $('#n-bask').textContent=basket.length;
+}
+
+/* ---------- dashboard ---------- */
+[['DOCX',31240],['XLSX',22105],['PDF',12870],['DOC',7450],['TXT',2310],['GIFT',1120],['أخرى',1459]].forEach(([k,v])=>{
+  $('#fmts').insertAdjacentHTML('beforeend',`<div class="fmt"><span class="mono">${k}</span><div class="bar"><span style="width:${v/31240*100}%"></span></div><span class="mono muted">${v.toLocaleString('en')}</span></div>`);
+});
+
+/* ---------- drop zone ---------- */
+const dz=$('#dropzone'); const seen=new Map(); let fileCount=0;
+['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over')}));
+['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('over')}));
+dz.addEventListener('drop',async ev=>{
+  const items=[...ev.dataTransfer.items||[]];
+  if(items.length&&items[0].webkitGetAsEntry){
+    for(const it of items){const en=it.webkitGetAsEntry();if(en)await walk(en,'')}
+  } else [...ev.dataTransfer.files].forEach(f=>addFile(f,''));
+});
+$('#picker').onchange=e=>{[...e.target.files].forEach(f=>addFile(f,''));e.target.value=''};
+async function walk(entry,path){
+  if(entry.isFile){await new Promise(r=>entry.file(f=>{addFile(f,path);r()},r))}
+  else if(entry.isDirectory){
+    const rd=entry.createReader();let batch;
+    do{batch=await new Promise(r=>rd.readEntries(r,()=>r([])));for(const e of batch)await walk(e,path+entry.name+'/')}while(batch.length);
+  }
+}
+function addFile(f,path){
+  const key=f.name+'|'+f.size; const ext=(f.name.split('.').pop()||'').toLowerCase();
+  const el=document.createElement('div');el.className='file';
+  el.innerHTML=`<span class="ext">${esc(ext.slice(0,4))}</span><div><div class="nm">${esc(path+f.name)}</div><div class="meta">${(f.size/1024).toFixed(1)} KB</div></div><span class="chip wait">بالانتظار</span>`;
+  $('#fileList').prepend(el);fileCount++;$('#n-drop').textContent=fileCount;
+  const chip=el.querySelector('.chip'),meta=el.querySelector('.meta');
+  if(seen.has(key)){chip.className='chip warn';chip.textContent='مكرر';meta.textContent+=` · رُفع سابقًا بنفس البصمة`;return}
+  seen.set(key,1);
+  const ok=['docx','xlsx','pdf','doc','xls','txt','gift','md','zip'].includes(ext);
+  setTimeout(()=>{chip.className='chip run';chip.textContent='يُقرأ…'},300);
+  if(f.text&&['txt','gift','md'].includes(ext)){
+    f.text().then(txt=>{const n=parseText(txt,f.name);setTimeout(()=>finish(chip,meta,n,ext),700)});
+  } else setTimeout(()=>{
+    if(!ok){chip.className='chip wait';chip.textContent='تم تخطيه';meta.textContent+=' · ليس ملف أسئلة';return}
+    if(f.name.includes('محمي')){chip.className='chip bad';chip.textContent='فشل';meta.textContent+=' · الملف محمي بكلمة مرور';return}
+    if(f.name.includes('مصور')){chip.className='chip warn';chip.textContent='يحتاج OCR';meta.textContent+=' · PDF مصوّر، سيُقرأ بالتعرف الضوئي';return}
+    finish(chip,meta,5+Math.floor(Math.random()*40),ext);
+  },900+Math.random()*900);
+}
+function finish(chip,meta,n,ext){
+  if(n===0){chip.className='chip warn';chip.textContent='لم تُكتشف أسئلة';meta.textContent+=' · افتحه للمطابقة اليدوية';return}
+  chip.className='chip ok';chip.textContent=`تم · ${n} سؤال`;
+}
+/* real mini-parser for TXT / GIFT: numbered stems + أ) ب) or A) B) options, '*' marks the answer; GIFT {=..~..} */
+function parseText(txt,src){
+  let found=0;
+  const gift=[...txt.matchAll(/(?:::([^:]*)::)?([^{}]+?)\{([^}]*)\}/g)];
+  if(gift.length){gift.forEach((m,i)=>{const parts=[...m[3].matchAll(/([=~])\s*([^=~]+)/g)];if(parts.length<2)return;
+    pushQ(m[2].trim(),parts.map(p=>p[2].trim()),parts.findIndex(p=>p[1]==='='),src,'GIFT · سؤال '+(i+1));found++});return found}
+  const blocks=txt.split(/\n(?=\s*\d+\s*[-.)])/);
+  blocks.forEach((b,i)=>{const lines=b.split('\n').map(s=>s.trim()).filter(Boolean);if(lines.length<3)return;
+    const stem=lines[0].replace(/^\d+\s*[-.)]\s*/,'');const opts=[];let ans=null;
+    lines.slice(1).forEach(l=>{const m=l.match(/^(\*?)\s*([أ-يA-Da-d]|هـ)\s*[-.)]\s*(.+)$/);if(m){if(m[1])ans=opts.length;opts.push(m[3].replace(/\*$/,'').trim())}});
+    if(opts.length>=2){pushQ(stem,opts,ans,src,'سطر تقريبي '+(i+1));found++}});
+  return found;
+}
+let nextId=200;
+function pushQ(t,o,a,src,pos){Q.push({id:'Q-000'+(nextId++),t,o,a:a<0?null:a,src,pos,conf:a==null||a<0?'r':'g',st:'review',ind:null,sg:[],how:a==null?'لم يُعثر على علامة للإجابة':'مستخرج من ملفك'});refreshCounts()}
+$('#demoFiles').onclick=()=>{
+  [['نموذج-ب-2023.docx',48211],['بنك-محاسب.xlsx',90320],['امتحان-قديم-مصور.pdf',2210444],['أسئلة-محمي.docx',33100],['شعار.png',8111],['نموذج-ب-2023.docx',48211]]
+  .forEach(([n,s],i)=>setTimeout(()=>addFile({name:n,size:s},''),i*180));
+  const t=new File(['1. ما الوحدة الأساسية لقياس الزمن في النظام الدولي؟\nأ) الدقيقة\n*ب) الثانية\nج) الساعة\nد) اليوم\n\n2. أي مما يلي يُعد مصدرًا متجددًا للطاقة؟\nأ) الفحم\nب) الغاز الطبيعي\n*ج) الرياح\nد) النفط\n'],'عينة-نصية.txt',{type:'text/plain'});
+  setTimeout(()=>addFile(t,''),1200);
+};
+
+/* ---------- network share tree ---------- */
+const TREE=[{n:'إداري',c:18240,k:[{n:'2021',c:3110},{n:'2022',c:4870},{n:'2023',c:5402},{n:'2024',c:4858}]},{n:'محاسبة',c:9120,k:[{n:'نماذج قديمة',c:6100},{n:'2024',c:3020}]},{n:'هندسة',c:14077,k:[{n:'مدني',c:7304},{n:'كهربائي',c:6773}]},{n:'تعليم',c:21002},{n:'صحي',c:16115}];
+function treeHTML(list,path){return list.map(x=>{const p=path?path+'/'+x.n:x.n;return `<li><div class="node" draggable="true" data-path="${esc(p)}" data-c="${x.c}" tabindex="0"><span aria-hidden="true">📁</span>${esc(x.n)}<span class="c mono">${x.c.toLocaleString('en')} ملف</span></div>${x.k?`<ul class="tree">${treeHTML(x.k,p)}</ul>`:''}</li>`}).join('')}
+$('#tree').innerHTML=treeHTML(TREE,'');
+const qz=$('#queue');
+$$('#tree .node').forEach(n=>{
+  n.addEventListener('dragstart',e=>e.dataTransfer.setData('text/x-path',n.dataset.path+'|'+n.dataset.c));
+  n.addEventListener('click',()=>{if(matchMedia('(max-width:900px)').matches)enqueue(n.dataset.path,+n.dataset.c)});
+  n.addEventListener('keydown',e=>{if(e.key==='Enter')enqueue(n.dataset.path,+n.dataset.c)});
+});
+['dragenter','dragover'].forEach(e=>qz.addEventListener(e,ev=>{ev.preventDefault();qz.classList.add('over')}));
+['dragleave','drop'].forEach(e=>qz.addEventListener(e,()=>qz.classList.remove('over')));
+qz.addEventListener('drop',e=>{e.preventDefault();const d=e.dataTransfer.getData('text/x-path');if(d){const[p,c]=d.split('|');enqueue(p,+c)}});
+function enqueue(path,count){
+  $('#qEmpty')?.remove();
+  const el=document.createElement('div');el.className='qitem';
+  el.innerHTML=`<div class="row"><b>${esc(path)}</b><span class="chip run">يعالج</span></div><div class="bar"><span style="width:0%"></span></div><div class="row"><span class="muted mono" style="font-size:12.5px">0 / ${count.toLocaleString('en')}</span><button class="btn sm">إيقاف مؤقت</button></div>`;
+  qz.append(el);
+  let done=0,paused=false;const bar=el.querySelector('.bar span'),lbl=el.querySelector('.mono'),chip=el.querySelector('.chip'),b=el.querySelector('button');
+  b.onclick=()=>{paused=!paused;b.textContent=paused?'استئناف':'إيقاف مؤقت';chip.className='chip '+(paused?'wait':'run');chip.textContent=paused?'متوقف':'يعالج'};
+  const iv=setInterval(()=>{if(paused)return;done=Math.min(count,done+Math.ceil(count/40));bar.style.width=(done/count*100)+'%';lbl.textContent=`${done.toLocaleString('en')} / ${count.toLocaleString('en')}`;
+    if(done>=count){clearInterval(iv);chip.className='chip ok';chip.textContent='اكتمل';b.remove()}},250);
+  toast(`أُضيف «${path}» إلى قائمة المعالجة`);
+}
+
+/* ---------- column mapping ---------- */
+const COLS=['رقم','نص_السؤال','البديل 1','البديل 2','البديل 3','البديل 4','الصحيح','ملاحظات','الصعوبة'];
+const ROWS=[['1','ما القيد المحاسبي لشراء أصل نقدًا؟','من ح/الأصل إلى ح/الصندوق','من ح/الصندوق إلى ح/الأصل','لا يسجل','من ح/المورد إلى ح/الأصل','1','','متوسط'],['2','أي القوائم تُظهر المركز المالي؟','قائمة الدخل','الميزانية العمومية','التدفقات النقدية','حقوق الملكية','2','','سهل'],['3','الإهلاك يمثل:','توزيع تكلفة الأصل على عمره','زيادة قيمة الأصل','مصروفًا نقديًا','إيرادًا','1','مراجعة','صعب']];
+const FIELDS=[['code','رمز السؤال',0],['stem','نص السؤال',1],['o1','الخيار أ',1],['o2','الخيار ب',1],['o3','الخيار ج',0],['o4','الخيار د',0],['ans','الإجابة الصحيحة',1],['diff','الصعوبة',0]];
+const AUTO={code:'رقم',stem:'نص_السؤال',o1:'البديل 1',o2:'البديل 2',o3:'البديل 3',o4:'البديل 4',ans:'الصحيح',diff:'الصعوبة'};
+let mapping={};
+function renderMap(){
+  const used=Object.values(mapping);
+  $('#cols').innerHTML=COLS.filter(c=>!used.includes(c)).map(c=>`<span class="colchip" draggable="true" data-col="${esc(c)}" tabindex="0">${esc(c)}</span>`).join('')||'<span class="muted">كل الأعمدة استُخدمت</span>';
+  $('#slots').innerHTML=FIELDS.map(([k,l,r])=>`<div class="slot ${r?'req':''} ${mapping[k]?'filled':''}" data-k="${k}"><span class="lbl">${l}</span>${mapping[k]?`<span class="colchip" draggable="true" data-col="${esc(mapping[k])}" data-from="${k}">${esc(mapping[k])}</span>`:'<span class="muted" style="font-size:12.5px">أفلت عمودًا</span>'}</div>`).join('');
+  const hdr=FIELDS.filter(f=>mapping[f[0]]);
+  $('#mapPreview').innerHTML=hdr.length?`<thead><tr>${hdr.map(f=>`<th>${f[1]}</th>`).join('')}</tr></thead><tbody>${ROWS.map(r=>`<tr>${hdr.map(f=>`<td>${esc(r[COLS.indexOf(mapping[f[0]])])}</td>`).join('')}</tr>`).join('')}</tbody>`:'<tbody><tr><td class="muted">اسحب الأعمدة إلى الحقول لترى المعاينة</td></tr></tbody>';
+  let pick=null;
+  $$('#cols .colchip, #slots .colchip').forEach(c=>{
+    c.addEventListener('dragstart',e=>e.dataTransfer.setData('text/x-col',c.dataset.col+'|'+(c.dataset.from||'')));
+    c.addEventListener('click',()=>{window._pickCol=c.dataset.col;window._pickFrom=c.dataset.from||'';$$('.colchip').forEach(x=>x.style.outline='');c.style.outline='2px solid var(--accent)'});
+  });
+  $$('.slot').forEach(s=>{
+    ['dragenter','dragover'].forEach(e=>s.addEventListener(e,ev=>{ev.preventDefault();s.classList.add('over')}));
+    s.addEventListener('dragleave',()=>s.classList.remove('over'));
+    s.addEventListener('drop',ev=>{ev.preventDefault();const[c,from]=ev.dataTransfer.getData('text/x-col').split('|');place(c,from,s.dataset.k)});
+    s.addEventListener('click',e=>{if(window._pickCol&&!e.target.closest('.colchip')){place(window._pickCol,window._pickFrom,s.dataset.k);window._pickCol=null}});
+  });
+}
+function place(col,from,k){if(!col)return;if(from)delete mapping[from];mapping[k]=col;renderMap()}
+$('#autoMap').onclick=()=>{mapping={...AUTO};renderMap();toast('اقتُرحت المطابقة من أسماء الأعمدة. راجعها قبل الحفظ.')};
+$('#resetMap').onclick=()=>{mapping={};renderMap()};
+$('#saveTpl').onclick=()=>{const miss=FIELDS.filter(f=>f[2]&&!mapping[f[0]]).map(f=>f[1]);
+  if(miss.length)return toast('ينقص: '+miss.join('، '));
+  toast('حُفظ القالب «اختبار محاسب» واستُخرج 214 سؤالًا. الملفات ذات الأعمدة نفسها ستُطابق تلقائيًا.')};
+renderMap();
+
+/* ---------- review ---------- */
+let rvIdx=0,rvFilter='review';
+const confTxt={g:'ثقة عالية',y:'ثقة متوسطة',r:'تحتاج تدخلًا'};
+function rvList(){return Q.filter(q=>rvFilter==='all'||q.st===rvFilter)}
+function renderReview(){
+  const fl=[['review','بانتظار المراجعة'],['approved','معتمدة'],['flagged','معلّمة'],['all','الكل']];
+  $('#rvFilter').innerHTML=fl.map(([k,l])=>`<button class="btn sm ${rvFilter===k?'primary':''}" data-f="${k}">${l} <span class="mono">${k==='all'?Q.length:Q.filter(q=>q.st===k).length}</span></button>`).join('');
+  $$('#rvFilter button').forEach(b=>b.onclick=()=>{rvFilter=b.dataset.f;rvIdx=0;renderReview()});
+  const list=rvList();rvIdx=Math.min(rvIdx,Math.max(0,list.length-1));
+  $('#qlist').innerHTML=list.map((q,i)=>`<button class="qrow" role="option" aria-selected="${i===rvIdx}" data-i="${i}"><span class="dot ${q.conf}" title="${confTxt[q.conf]}"></span><span><span class="t">${esc(q.t)}</span><span class="m"><span class="mono">${q.id}</span> · ${esc(q.src.split('/').pop())}</span></span></button>`).join('')||'<div class="empty">لا توجد أسئلة هنا</div>';
+  $$('.qrow').forEach(r=>r.onclick=()=>{rvIdx=+r.dataset.i;renderReview()});
+  const q=list[rvIdx];
+  if(!q){$('#qdetail').innerHTML='<div class="empty">انتهت المراجعة في هذه القائمة</div>';refreshCounts();return}
+  const issues=[];
+  if(q.a==null)issues.push(['r','لم تُحدَّد إجابة صحيحة. اضغط على الخيار الصحيح.']);
+  if(q.conf==='y')issues.push(['y','طريقة تحديد الإجابة غير مؤكدة: '+q.how]);
+  if(q.dup)issues.push(['y',`شبه مكرر مع ${q.dup[0]} بنسبة ${Math.round(q.dup[1]*100)}%. لن يُحذف تلقائيًا.`]);
+  if(q.o.length<4)issues.push(['y','عدد الخيارات أقل من 4']);
+  if(!issues.length)issues.push(['g','البنية سليمة: نص وخيارات وإجابة واحدة']);
+  const srcText=`… ${q.pos} …\n<mark>${esc(q.t)}</mark>\n${q.o.map((o,i)=>`${L[i]}) ${esc(o)}`).join('\n')}`;
+  $('#qdetail').innerHTML=`
+    <div class="head" style="margin-bottom:8px"><span class="mono muted">${q.id}</span><span class="chip ${q.conf==='g'?'ok':q.conf==='y'?'warn':'bad'}"><span class="dot ${q.conf}"></span>${confTxt[q.conf]}</span></div>
+    <h2 style="font-size:18px">${esc(q.t)}</h2>
+    <div class="opts">${q.o.map((o,i)=>`<button class="opt ${q.a===i?'correct':''}" data-i="${i}"><span class="L">${L[i]}</span>${esc(o)}</button>`).join('')}</div>
+    <div class="issues">${issues.map(([c,t])=>`<div class="issue"><span class="dot ${c}"></span>${esc(t)}</div>`).join('')}</div>
+    <h2 style="margin-top:16px;font-size:14px">المصدر · <span class="muted" style="font-weight:400">${esc(q.src)}</span></h2>
+    <div class="src">${srcText}</div>
+    <div class="actions"><button class="btn primary" id="apv">اعتماد <span class="kbd">A</span></button><button class="btn" id="flg">تعليم للجنة <span class="kbd">F</span></button><button class="btn" id="nxt">التالي <span class="kbd">J</span></button></div>`;
+  $$('.opt').forEach(b=>b.onclick=()=>{const prev=q.a;q.a=+b.dataset.i;if(q.conf==='r')q.conf='y';renderReview();toast(`عُيّن الخيار «${L[q.a]}» إجابة صحيحة (طبقة تصحيح، الأصل محفوظ)`,()=>{q.a=prev;renderReview()})});
+  $('#apv').onclick=()=>setSt(q,'approved');$('#flg').onclick=()=>setSt(q,'flagged');$('#nxt').onclick=()=>move(1);
+  refreshCounts();
+}
+function setSt(q,st){
+  if(st==='approved'&&q.a==null)return toast('حدّد الإجابة الصحيحة قبل الاعتماد');
+  const prev=q.st;q.st=st;renderReview();
+  toast(st==='approved'?`اعتُمد ${q.id}`:`عُلّم ${q.id} للجنة`,()=>{q.st=prev;renderReview()});
+}
+function move(d){const n=rvList().length;if(!n)return;rvIdx=(rvIdx+d+n)%n;renderReview()}
+document.addEventListener('keydown',e=>{
+  if($('[data-screen="review"]').hidden||/INPUT|TEXTAREA/.test(e.target.tagName))return;
+  const q=rvList()[rvIdx];const k=e.key.toLowerCase();
+  if(k==='j')move(1);else if(k==='k')move(-1);else if(k==='a'&&q)setSt(q,'approved');else if(k==='f'&&q)setSt(q,'flagged');
+});
+
+/* ---------- classify ---------- */
+let selQ=null;const indName=c=>FW.flatMap(d=>d.subs.flatMap(s=>s.inds)).find(i=>i[0]===c)?.[1]||c;
+function renderClassify(){
+  const un=Q.filter(q=>!q.ind);
+  $('#unclassified').innerHTML=un.map(q=>`<div class="qcard ${selQ===q.id?'sel':''}" draggable="true" data-id="${q.id}"><div>${esc(q.t)}</div>${q.sg.length?`<div class="sugg"><span class="muted" style="font-size:12px">اقتراح النموذج:</span>${q.sg.slice(0,3).map(([c,s])=>`<button class="sbtn" data-id="${q.id}" data-c="${c}" title="${esc(indName(c))}"><span class="mono">${c}</span><span class="mono muted">${Math.round(s*100)}%</span></button>`).join('')}</div>`:'<span class="muted" style="font-size:12px">لا اقتراح بعد</span>'}</div>`).join('')||'<div class="empty">كل الأسئلة مصنفة</div>';
+  const cnt=c=>Q.filter(q=>q.ind===c).length;
+  $('#framework').innerHTML=FW.map(d=>`<div class="dom">${esc(d.d)}</div>${d.subs.map(s=>`<div class="subd">${esc(s.s)}</div>${s.inds.map(([c,n])=>`<div class="ind" data-c="${c}"><span><span class="code">${c}</span> ${esc(n)}</span><span class="cnt ${cnt(c)?'':'zero'}" title="${cnt(c)?'':'مؤشر بلا أسئلة'}">${cnt(c)}</span></div>`).join('')}`).join('')}`).join('');
+  $$('.qcard').forEach(c=>{
+    c.addEventListener('dragstart',e=>e.dataTransfer.setData('text/x-q',c.dataset.id));
+    c.addEventListener('click',e=>{if(e.target.closest('.sbtn'))return;selQ=selQ===c.dataset.id?null:c.dataset.id;renderClassify()});
+  });
+  $$('.sbtn').forEach(b=>b.onclick=()=>assign(b.dataset.id,b.dataset.c,'اقتراح'));
+  $$('.ind').forEach(i=>{
+    ['dragenter','dragover'].forEach(e=>i.addEventListener(e,ev=>{ev.preventDefault();i.classList.add('over')}));
+    i.addEventListener('dragleave',()=>i.classList.remove('over'));
+    i.addEventListener('drop',ev=>{ev.preventDefault();assign(ev.dataTransfer.getData('text/x-q'),i.dataset.c,'سحب')});
+    i.addEventListener('click',()=>{if(selQ){assign(selQ,i.dataset.c,'اختيار');selQ=null}});
+  });
+  refreshCounts();
+}
+function assign(id,c,how){const q=Q.find(x=>x.id===id);if(!q)return;q.ind=c;renderClassify();toast(`رُبط ${id} بالمؤشر ${c}`,()=>{q.ind=null;renderClassify()})}
+
+/* ---------- export ---------- */
+function renderExport(){
+  const ap=Q.filter(q=>q.st==='approved'&&!basket.includes(q.id));
+  $('#approvedList').innerHTML=ap.map(q=>`<div class="qcard" draggable="true" data-id="${q.id}"><div>${esc(q.t)}</div><div class="muted" style="font-size:12px"><span class="mono">${q.id}</span> · ${q.ind?'مؤشر '+q.ind:'<span style="color:var(--amber)">بلا مؤشر</span>'}</div></div>`).join('')||'<div class="empty">اعتمد أسئلة من شاشة المراجعة أولًا</div>';
+  const bz=$('#basket');
+  bz.innerHTML=basket.length?basket.map(id=>{const q=Q.find(x=>x.id===id);return `<div class="bitem"><span>${esc(q.t.slice(0,60))}${q.t.length>60?'…':''}</span><button class="btn sm" data-rm="${id}" aria-label="إزالة">×</button></div>`}).join(''):'<div class="empty">أفلت الأسئلة هنا</div>';
+  $$('#approvedList .qcard').forEach(c=>{c.addEventListener('dragstart',e=>e.dataTransfer.setData('text/x-q',c.dataset.id));c.addEventListener('dblclick',()=>addB(c.dataset.id))});
+  $$('[data-rm]').forEach(b=>b.onclick=()=>{basket=basket.filter(x=>x!==b.dataset.rm);renderExport()});
+  refreshCounts();
+}
+const bz=$('#basket');
+['dragenter','dragover'].forEach(e=>bz.addEventListener(e,ev=>{ev.preventDefault();bz.classList.add('over')}));
+['dragleave','drop'].forEach(e=>bz.addEventListener(e,()=>bz.classList.remove('over')));
+bz.addEventListener('drop',e=>{e.preventDefault();addB(e.dataTransfer.getData('text/x-q'))});
+function addB(id){if(id&&!basket.includes(id)){basket.push(id);renderExport()}}
+$('#addAll').onclick=()=>{Q.filter(q=>q.st==='approved').forEach(q=>addB(q.id))};
+$('#clearB').onclick=()=>{const prev=[...basket];basket=[];renderExport();$('#giftPanel').hidden=true;toast('فُرّغت السلة',()=>{basket=prev;renderExport()})};
+const gEsc=s=>String(s).replace(/([~=#{}:\\])/g,'\\$1');
+$('#mkGift').onclick=()=>{
+  if(!basket.length)return toast('السلة فارغة');
+  let ok=0,bad=[],escaped=0;
+  const out=basket.map(id=>{const q=Q.find(x=>x.id===id);
+    if(q.a==null||q.o.length<2){bad.push(q.id);return `// خطأ: ${q.id} بلا إجابة صحيحة، لم يُصدَّر`}
+    const raw=q.t+q.o.join('');escaped+=(raw.match(/[~=#{}:\\]/g)||[]).length;ok++;
+    return `// ${q.id} | مصدر: ${q.src} | ${q.pos}${q.ind?` | مؤشر: ${q.ind} | إطار: 2.1`:''}\n::${q.id}::${gEsc(q.t)} {\n${q.o.map((o,i)=>`  ${i===q.a?'=':'~'}${gEsc(o)}`).join('\n')}\n}`}).join('\n\n');
+  $('#giftOut').value='// UTF-8 · ترتيب الخيارات كما في الأصل\n\n'+out+'\n';
+  $('#giftReport').innerHTML=`<span class="chip ok">${ok} صالح</span> ${bad.length?`<span class="chip bad">${bad.length} مرفوض</span>`:''} <span class="chip wait">${escaped} رمز مُهرّب</span>`;
+  $('#giftPanel').hidden=false;
+};
+$('#mkXlsx').onclick=()=>toast('في التطبيق الحقيقي: ملف Excel فيه الأسئلة والمصدر والمؤشر وحالة المراجعة.');
+$('#copyGift').onclick=()=>{const t=$('#giftOut');navigator.clipboard?.writeText(t.value).then(()=>toast('نُسخ نص GIFT')).catch(()=>{t.select();toast('حدد النص وانسخه يدويًا')})};
+
+/* ---------- ideas ---------- */
+[['بحث شامل','ابحث بنص السؤال أو جزء منه أو برمز المؤشر، مع فلاتر للتخصص والسنة والحالة.'],
+ ['كشف التكرار بين الملفات','مجموعات من الأسئلة المتطابقة أو المتشابهة جنبًا إلى جنب، وتختار اللجنة النسخة المعتمدة.'],
+ ['خريطة التغطية','جدول حراري لكل مؤشر وعدد أسئلته، والمؤشرات الفارغة باللون الأحمر.'],
+ ['سجل تدقيق','من اعتمد ماذا ومتى، وكل تصحيح محفوظ مع القيمة الأصلية.'],
+ ['تعيين المهام للمراجعين','توزيع الأسئلة على المراجعين حسب التخصص، مع عداد إنجاز لكل شخص.'],
+ ['مراجعة ثنائية','الأسئلة منخفضة الثقة تحتاج موافقة مراجعَين قبل الاعتماد.'],
+ ['تنبيهات','إشعار داخل التطبيق عند انتهاء دفعة أو فشل ملفات كثيرة.'],
+ ['قوالب استخراج Word','مثل قوالب Excel: تعلّم شكل ملف Word مرة واحدة (الإجابة بالأحمر، أو جدول في آخر الملف).'],
+ ['فحص سلامة النص','أخطاء إملائية، خيار "كل ما سبق"، خيارات متداخلة، نفي مزدوج. يُعرض كاقتراح ولا يغيّر النص.'],
+ ['معاينة كما في Moodle','عرض السؤال بشكل Moodle قبل التصدير.'],
+ ['وضع ليلي واختصارات','للمراجعين الذين يقضون ساعات في المراجعة.'],
+ ['تصدير XML لـ Moodle','بجانب GIFT، لمن يحتاج صورًا أو أنواع أسئلة أخرى.']
+].forEach(([b,p])=>$('#ideas').insertAdjacentHTML('beforeend',`<div class="idea"><b>${b}</b><p>${p}</p></div>`));
+
+let start='dash';try{start=localStorage.getItem('qb-view')||'dash'}catch(e){}
+if(!$(`[data-screen="${start}"]`))start='dash';
+show(start);refreshCounts();
+</script>

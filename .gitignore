@@ -1,0 +1,15 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+appsettings.Production.json
+secrets/
+logs/
+exports/
+App_Data/
+*.db
+*.db-shm
+*.db-wal
+TestResults/
+__pycache__/

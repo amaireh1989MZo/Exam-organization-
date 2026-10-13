@@ -13,56 +13,14 @@ using QuestionBank.Core.Reports;
 using QuestionBank.Core.Review;
 using QuestionBank.Core.Inventory;
 using QuestionBank.Web.Security;
-using QuestionBank.Web.Services;
+using QuestionBank.Core.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOptions<InventoryOptions>()
-    .Bind(builder.Configuration.GetSection(InventoryOptions.SectionName))
-    .ValidateDataAnnotations();
-
-// SQLite للتجربة. ملف القاعدة يجب أن يكون على قرص الخادم المحلي، وليس على مشاركة شبكة.
-var connectionString = builder.Configuration.GetConnectionString("QuestionBank")
-    ?? "Data Source=App_Data/questionbank.db";
-builder.Services.AddDbContext<QuestionBankDbContext>(o => o.UseSqlite(connectionString));
-
-builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<ISourceFileSystem, PhysicalSourceFileSystem>();
-builder.Services.AddScoped<InventoryScanner>();
-builder.Services.AddScoped<InventoryQueries>();
-builder.Services.AddScoped<FolderService>();
-builder.Services.AddOptions<UploadOptions>()
-    .Bind(builder.Configuration.GetSection(UploadOptions.SectionName))
-    .ValidateDataAnnotations();
-builder.Services.AddSingleton(ReaderRegistry.Default());
-builder.Services.AddScoped<ExtractionService>();
-builder.Services.AddScoped<UploadService>();
-builder.Services.AddScoped<QueueProcessor>();
-builder.Services.AddScoped<ReviewService>();
-builder.Services.AddScoped<ExportService>();
-builder.Services.AddScoped<DuplicateService>();
-builder.Services.AddScoped<ExcelReportService>();
-builder.Services.AddScoped<ColumnTemplateService>();
-builder.Services.AddOptions<AiOptions>().Bind(builder.Configuration.GetSection(AiOptions.SectionName)).ValidateDataAnnotations();
-builder.Services.AddSingleton<LexicalSuggester>();
-// الاقتراحات: نصية افتراضيًا، أو نموذج تضمين محلي عبر Ollama إذا ضُبط Provider=ollama بعنوان داخلي.
-if (string.Equals(builder.Configuration["QuestionBank:Ai:Provider"], "ollama", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddHttpClient<EmbeddingSuggester>();
-    builder.Services.AddSingleton<IIndicatorSuggester>(sp => sp.GetRequiredService<EmbeddingSuggester>());
-}
-else
-{
-    builder.Services.AddSingleton<IIndicatorSuggester>(sp => sp.GetRequiredService<LexicalSuggester>());
-}
-builder.Services.AddScoped<FrameworkService>();
-builder.Services.AddSingleton<ExtractionSignal>();
-builder.Services.AddSingleton<InventoryCoordinator>();
+builder.Services.AddQuestionBankCore(builder.Configuration);
+// العامل داخل الموقع افتراضيًا. للجرد الكامل الطويل: EnableWorker=false هنا، وتشغيل خدمة QuestionBank.Worker.
 if (builder.Configuration.GetValue("QuestionBank:EnableWorker", true))
-{
-    builder.Services.AddHostedService<InventoryWorker>();
-    builder.Services.AddHostedService<ExtractionWorker>();
-}
+    builder.Services.AddQuestionBankWorkers();
 
 builder.Services.AddAppAuthentication(builder.Configuration, builder.Environment);
 builder.Services.AddAppAuthorization(builder.Configuration);
@@ -77,7 +35,7 @@ builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 
-await InitializeDatabaseAsync(app.Services, connectionString);
+await ServiceRegistration.InitializeDatabaseAsync(app.Services, app.Configuration);
 
 if (!app.Environment.IsDevelopment())
 {
@@ -153,30 +111,38 @@ app.MapGet("/api/config/paths", (IOptions<InventoryOptions> options, ISourceFile
 
 var inventory = app.MapGroup("/api/inventory").RequireAuthorization(AppPolicies.ManageBank);
 
-inventory.MapGet("/status", async (InventoryQueries queries, InventoryCoordinator coordinator, CancellationToken ct) =>
+inventory.MapGet("/status", async (InventoryQueries queries, WorkerCommandService workers, CancellationToken ct) =>
 {
     var status = await queries.GetStatusAsync(ct);
+    var worker = await workers.StatusAsync(WorkerCommandService.InventoryWorkerName, ct);
+    var extraction = await workers.StatusAsync(WorkerCommandService.ExtractionWorkerName, ct);
     return Results.Ok(new
     {
         worker = new
         {
-            scanning = coordinator.IsScanning,
-            problemCode = coordinator.LastProblemCode,
-            problem = coordinator.LastProblemMessage
+            running = worker.Running,
+            scanning = worker.Busy,
+            problemCode = worker.ProblemCode,
+            problem = worker.Problem,
+            heartbeatUtc = worker.HeartbeatUtc,
+            host = worker.Host
         },
+        extraction,
         status
     });
 });
 
-inventory.MapPost("/scan", (InventoryCoordinator coordinator) =>
+inventory.MapPost("/scan", async (HttpContext ctx, WorkerCommandService workers, WorkerSignals signals, CancellationToken ct) =>
 {
-    coordinator.RequestScan();
+    await workers.EnqueueAsync(WorkerCommandKinds.Scan, UserName(ctx), ct);
+    signals.WakeInventory();
     return Results.Accepted("/api/inventory/status", new { message = "طُلب بدء الجرد أو استئنافه." });
 });
 
-inventory.MapPost("/abandon", (InventoryCoordinator coordinator) =>
+inventory.MapPost("/abandon", async (HttpContext ctx, WorkerCommandService workers, WorkerSignals signals, CancellationToken ct) =>
 {
-    coordinator.RequestAbandon();
+    await workers.EnqueueAsync(WorkerCommandKinds.Abandon, UserName(ctx), ct);
+    signals.WakeInventory();
     return Results.Accepted("/api/inventory/status", new { message = "طُلب إيقاف عملية الجرد الحالية نهائيًا." });
 });
 
@@ -192,11 +158,11 @@ var queue = app.MapGroup("/api/queue").RequireAuthorization(AppPolicies.ManageBa
 
 queue.MapGet("/", async (FolderService folders, CancellationToken ct) => Results.Ok(await folders.GetQueueAsync(ct)));
 
-queue.MapPost("/", async (EnqueueRequest request, HttpContext ctx, FolderService folders, ExtractionSignal signal, CancellationToken ct) =>
+queue.MapPost("/", async (EnqueueRequest request, HttpContext ctx, FolderService folders, WorkerSignals signals, CancellationToken ct) =>
 {
     var (outcome, entry) = await folders.EnqueueAsync(request.Path ?? "", ctx.User.Identity?.Name ?? "unknown", ct);
     if (outcome == EnqueueOutcome.Added)
-        signal.Notify();
+        signals.WakeExtraction();
     return outcome switch
     {
         EnqueueOutcome.Added => Results.Created($"/api/queue/{entry!.Id}", entry),
@@ -236,14 +202,14 @@ var templates = app.MapGroup("/api/templates").RequireAuthorization(AppPolicies.
 
 templates.MapGet("/", async (ColumnTemplateService service, CancellationToken ct) => Results.Ok(await service.ListAsync(ct)));
 
-templates.MapPost("/", async (TemplateRequest request, HttpContext ctx, ColumnTemplateService service, ExtractionSignal signal, CancellationToken ct) =>
+templates.MapPost("/", async (TemplateRequest request, HttpContext ctx, ColumnTemplateService service, WorkerSignals signals, CancellationToken ct) =>
 {
     var (template, error) = await service.SaveAsync(request, UserName(ctx), ct);
     if (template is null)
         return Results.BadRequest(new { message = error });
     var requeued = await service.RequeueUnmappedAsync(UserName(ctx), ct);
     if (requeued > 0)
-        signal.Notify();
+        signals.WakeExtraction();
     return Results.Ok(new { template, requeuedSourceFiles = requeued });
 });
 
@@ -444,23 +410,6 @@ static IResult ReviewResult(ReviewOutcome outcome) => outcome switch
     ReviewOutcome.NoAnswer => Results.BadRequest(new { message = "حدّد الإجابة الصحيحة قبل الاعتماد." }),
     _ => Results.Conflict(new { message = "أعد فتح السؤال المعتمد قبل تعديل إجابته." })
 };
-
-static async Task InitializeDatabaseAsync(IServiceProvider services, string connectionString)
-{
-    var dataSource = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource;
-    var directory = Path.GetDirectoryName(Path.GetFullPath(dataSource));
-    if (!string.IsNullOrEmpty(directory))
-        Directory.CreateDirectory(directory);
-
-    using var scope = services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<QuestionBankDbContext>();
-    await db.Database.MigrateAsync();
-    // WAL: قراءة لوحة الحالة لا تنتظر كتابات الجرد.
-    await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
-    // بصمات التكرار للأسئلة المستخرجة قبل إضافة الميزة.
-    await scope.ServiceProvider.GetRequiredService<DuplicateService>().BackfillAsync(CancellationToken.None);
-    await scope.ServiceProvider.GetRequiredService<DuplicateService>().BackfillBandsAsync(CancellationToken.None);
-}
 
 public partial class Program;
 

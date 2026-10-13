@@ -400,6 +400,65 @@ namespace QuestionBank.Core.Data.Migrations
                     b.ToTable("Indicators");
                 });
 
+            modelBuilder.Entity("QuestionBank.Core.Hosting.WorkerCommand", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ProcessedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProcessedAtUtc", "Id");
+
+                    b.ToTable("WorkerCommands");
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Hosting.WorkerState", b =>
+                {
+                    b.Property<string>("Name")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Busy")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("HeartbeatUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Host")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProblemCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProblemMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Name");
+
+                    b.ToTable("WorkerStates");
+                });
+
             modelBuilder.Entity("QuestionBank.Core.Inventory.ProcessingQueueItem", b =>
                 {
                     b.Property<long>("Id")

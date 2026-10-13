@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using QuestionBank.Core.Export;
 using QuestionBank.Core.Extraction;
 using QuestionBank.Core.Frameworks;
+using QuestionBank.Core.Hosting;
 using QuestionBank.Core.Inventory;
 using QuestionBank.Core.Quality;
 using QuestionBank.Core.Review;
@@ -22,6 +23,8 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<ColumnTemplate> ColumnTemplates => Set<ColumnTemplate>();
     public DbSet<CompetencyFramework> Frameworks => Set<CompetencyFramework>();
     public DbSet<CompetencyIndicator> Indicators => Set<CompetencyIndicator>();
+    public DbSet<WorkerCommand> WorkerCommands => Set<WorkerCommand>();
+    public DbSet<WorkerState> WorkerStates => Set<WorkerState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -126,6 +129,22 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.HasIndex(x => new { x.Band, x.Key });
             e.HasIndex(x => x.QuestionId);
             e.HasOne<Question>().WithMany().HasForeignKey(x => x.QuestionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<WorkerCommand>(e =>
+        {
+            e.Property(x => x.Kind).HasMaxLength(32).IsRequired();
+            e.Property(x => x.RequestedBy).HasMaxLength(256).IsRequired();
+            e.HasIndex(x => new { x.ProcessedAtUtc, x.Id });
+        });
+
+        modelBuilder.Entity<WorkerState>(e =>
+        {
+            e.HasKey(x => x.Name);
+            e.Property(x => x.Name).HasMaxLength(32);
+            e.Property(x => x.ProblemCode).HasMaxLength(100);
+            e.Property(x => x.ProblemMessage).HasMaxLength(1000);
+            e.Property(x => x.Host).HasMaxLength(256).IsRequired();
         });
 
         modelBuilder.Entity<CompetencyFramework>(e =>

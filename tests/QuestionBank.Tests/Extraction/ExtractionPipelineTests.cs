@@ -114,7 +114,7 @@ public sealed class ExtractionPipelineTests : IDisposable
     public async Task UploadWithoutReader_StaysPending()
     {
         await using var db = _kit.CreateDb();
-        var result = await Uploads(db).SaveAsync(Stream("PK fake docx"), "نموذج.docx", null, "u", CancellationToken.None);
+        var result = await Uploads(db).SaveAsync(Stream("%PDF fake"), "نموذج.pdf", null, "u", CancellationToken.None);
         Assert.Equal("Pending", result.Upload!.Status);
         Assert.False(result.Upload.Supported);
     }
@@ -166,7 +166,7 @@ public sealed class ExtractionPipelineTests : IDisposable
     {
         _kit.WriteFile("إداري/أ.txt", SampleTxt);
         _kit.WriteFile("إداري/ب.gift", SampleGift);
-        _kit.WriteFile("إداري/ج.docx", "fake");
+        _kit.WriteFile("إداري/ج.pdf", "fake");
         _kit.WriteFile("محاسبة/د.txt", SampleTxt);
         await _kit.ScanAsync();
         var before = _kit.SnapshotSource();
@@ -185,7 +185,7 @@ public sealed class ExtractionPipelineTests : IDisposable
         var files = _kit.Files().ToDictionary(f => f.RelativePath);
         Assert.Equal(FileStatus.Completed, files["إداري/أ.txt"].Status);
         Assert.Equal(FileStatus.Completed, files["إداري/ب.gift"].Status);
-        Assert.Equal(FileStatus.Pending, files["إداري/ج.docx"].Status);
+        Assert.Equal(FileStatus.Pending, files["إداري/ج.pdf"].Status);
         Assert.Equal(FileStatus.Pending, files["محاسبة/د.txt"].Status); // خارج المجلد المطلوب
         Assert.NotNull(files["إداري/أ.txt"].ContentHash);
         Assert.NotNull(files["إداري/ب.gift"].ContentHash);

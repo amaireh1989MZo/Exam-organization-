@@ -2,40 +2,48 @@ using System.Text.RegularExpressions;
 
 namespace QuestionBank.Core.Extraction;
 
-/// <summary>
-/// قارئ الملفات النصية (TXT وMD) للأسئلة المرقّمة.
-/// يكشف الإجابة الصحيحة بثلاث طرق مستقلة ويقارن بينها:
-/// علامة على الخيار (* أو ✓ أو (صح))، وسطر "الإجابة: ب" بعد الخيارات، وجدول إجابات في آخر الملف.
-/// اتفاق أكثر من طريقة يؤكد الإجابة، والتعارض يُحال للمراجع.
-/// </summary>
-public sealed partial class TextQuestionReader : IQuestionReader
+/// <summary>تنسيق نص الخيار في المصدر (Word). يُستخدم دليلًا على الإجابة فقط إذا ميّز خيارًا واحدًا.</summary>
+[Flags]
+public enum FormatMarks
 {
-    public string Name => "text";
-    public string Version => "1.0";
-    public bool CanRead(string extension) => extension is "txt" or "md";
+    None = 0,
+    Bold = 1,
+    Color = 2,
+    Underline = 4,
+    Highlight = 8
+}
 
+/// <summary>سطر من المصدر بعد استخراجه: نصه، وموقعه للعرض، وتنسيقه إن وُجد.</summary>
+public sealed record SourceLine(string Text, string Location, FormatMarks Marks = FormatMarks.None);
+
+/// <summary>
+/// محلل الأسطر المشترك بين TXT وWord. يكشف الإجابة الصحيحة بطرق مستقلة ويقارن بينها:
+/// علامة على الخيار (* أو ✓ أو (صح))، وسطر "الإجابة: ب"، وجدول إجابات في آخر الملف،
+/// وتنسيق يميّز خيارًا واحدًا فقط (عريض، لون، تسطير، تظليل).
+/// اتفاق أكثر من طريقة يؤكد الإجابة، والتعارض يُحال للمراجع. التنسيق وحده يعطي ثقة متوسطة.
+/// </summary>
+public static partial class LineQuestionParser
+{
     private sealed class Block
     {
         public required string Number;
-        public required int Line;
+        public required string Location;
         public readonly List<string> Stem = [];
-        public readonly List<(string Label, string Text, bool Marked)> Options = [];
+        public readonly List<(string Label, string Text, bool Marked, FormatMarks Format)> Options = [];
         public string? AnswerLineLabel;
     }
 
-    public ReaderResult Read(byte[] content)
+    public static (List<ExtractedQuestion> Questions, List<string> Warnings) Parse(IEnumerable<SourceLine> lines)
     {
-        var (text, _) = TextDecoding.Decode(content);
-        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         var blocks = new List<Block>();
         var key = new Dictionary<string, string>(StringComparer.Ordinal);
         var warnings = new List<string>();
         Block? current = null;
         var inKey = false;
 
-        for (var i = 0; i < lines.Length; i++)
+        foreach (var line in lines)
         {
-            var raw = lines[i].Trim().TrimStart('\uFEFF');
+            var raw = line.Text.Trim().TrimStart('\uFEFF');
             if (raw.Length == 0)
                 continue;
             // الأرقام تُوحَّد للمطابقة فقط؛ الطول لا يتغير فتبقى مواضع النص الأصلي صحيحة.
@@ -57,7 +65,7 @@ public sealed partial class TextQuestionReader : IQuestionReader
             var q = QuestionStart().Match(norm);
             if (q.Success)
             {
-                current = new Block { Number = q.Groups["n"].Value, Line = i + 1 };
+                current = new Block { Number = q.Groups["n"].Value, Location = line.Location };
                 current.Stem.Add(raw[q.Groups["t"].Index..].Trim());
                 blocks.Add(current);
                 continue;
@@ -77,7 +85,7 @@ public sealed partial class TextQuestionReader : IQuestionReader
             {
                 var marked = o.Groups["m1"].Success || o.Groups["m2"].Success;
                 var optionText = raw.Substring(o.Groups["t"].Index, o.Groups["t"].Length).Trim();
-                current.Options.Add((NormalizeLabel(o.Groups["l"].Value), optionText, marked));
+                current.Options.Add((NormalizeLabel(o.Groups["l"].Value), optionText, marked, line.Marks));
                 continue;
             }
 
@@ -87,7 +95,7 @@ public sealed partial class TextQuestionReader : IQuestionReader
             else
             {
                 var last = current.Options[^1];
-                current.Options[^1] = (last.Label, last.Text + " " + raw, last.Marked);
+                current.Options[^1] = (last.Label, last.Text + " " + raw, last.Marked, last.Format);
             }
         }
 
@@ -96,13 +104,19 @@ public sealed partial class TextQuestionReader : IQuestionReader
         {
             if (block.Options.Count == 0)
             {
-                warnings.Add($"سطر {block.Line}: نص مرقّم بلا خيارات، تم تخطيه.");
+                warnings.Add($"{block.Location}: نص مرقّم بلا خيارات، تم تخطيه.");
                 continue;
             }
             questions.Add(Build(block, questions.Count + 1, key));
         }
-        return new ReaderResult(Name, Version, questions, warnings);
+        return (questions, warnings);
     }
+
+    private static readonly (FormatMarks Flag, string Detector)[] FormatDetectors =
+    [
+        (FormatMarks.Bold, "format-bold"), (FormatMarks.Color, "format-color"),
+        (FormatMarks.Underline, "format-underline"), (FormatMarks.Highlight, "format-highlight")
+    ];
 
     private static ExtractedQuestion Build(Block block, int order, Dictionary<string, string> key)
     {
@@ -111,45 +125,61 @@ public sealed partial class TextQuestionReader : IQuestionReader
         int? IndexOfLabel(string? label) =>
             label is null ? null : block.Options.FindIndex(o => o.Label == label) is var idx and >= 0 ? idx : null;
 
-        var votes = new List<(string Detector, int Index)>();
+        var votes = new List<(string Detector, int Index, bool Strong)>();
 
         var marked = block.Options.Select((o, i) => (o, i)).Where(x => x.o.Marked).Select(x => x.i).ToList();
         if (marked.Count > 1)
             issues.Add("أكثر من خيار عليه علامة");
         foreach (var m in marked)
-            votes.Add((AnswerDetectors.Marker, m));
+            votes.Add((AnswerDetectors.Marker, m, true));
 
         if (block.AnswerLineLabel is not null)
         {
-            if (IndexOfLabel(block.AnswerLineLabel) is { } idx) votes.Add((AnswerDetectors.AnswerLine, idx));
+            if (IndexOfLabel(block.AnswerLineLabel) is { } idx) votes.Add((AnswerDetectors.AnswerLine, idx, true));
             else issues.Add($"سطر الإجابة يشير إلى «{block.AnswerLineLabel}» ولا يوجد خيار بهذا الحرف");
         }
         if (key.TryGetValue(block.Number, out var keyLabel))
         {
-            if (IndexOfLabel(keyLabel) is { } idx) votes.Add((AnswerDetectors.AnswerKey, idx));
+            if (IndexOfLabel(keyLabel) is { } idx) votes.Add((AnswerDetectors.AnswerKey, idx, true));
             else issues.Add($"جدول الإجابات يشير إلى «{keyLabel}» ولا يوجد خيار بهذا الحرف");
+        }
+
+        // التنسيق دليل فقط إذا ميّز خيارًا واحدًا؛ إذا كانت كل الخيارات (أو عدة خيارات) بالتنسيق نفسه فليس دليلًا.
+        if (block.Options.Count >= 2)
+        {
+            foreach (var (flag, detector) in FormatDetectors)
+            {
+                var withFlag = block.Options.Select((o, i) => (o, i)).Where(x => x.o.Format.HasFlag(flag)).Select(x => x.i).ToList();
+                if (withFlag.Count == 1)
+                    votes.Add((detector, withFlag[0], false));
+            }
         }
 
         var distinct = votes.Select(v => v.Index).Distinct().ToList();
         int? correct = null;
-        string detector;
+        string detectorName;
         var confidence = ExtractionConfidence.High;
         if (distinct.Count == 0)
         {
-            detector = AnswerDetectors.None;
+            detectorName = AnswerDetectors.None;
             confidence = ExtractionConfidence.Low;
             issues.Add("لم يُعثر على علامة للإجابة الصحيحة");
         }
         else if (distinct.Count > 1)
         {
-            detector = AnswerDetectors.Conflict;
+            detectorName = AnswerDetectors.Conflict;
             confidence = ExtractionConfidence.Low;
             issues.Add("تعارض بين طرق تحديد الإجابة: " + string.Join("، ", votes.Select(v => $"{v.Detector}={block.Options[v.Index].Label}")));
         }
         else
         {
             correct = distinct[0];
-            detector = string.Join("+", votes.Select(v => v.Detector).Distinct());
+            detectorName = string.Join("+", votes.Select(v => v.Detector).Distinct());
+            if (!votes.Any(v => v.Strong))
+            {
+                confidence = ExtractionConfidence.Medium;
+                issues.Add("الإجابة محددة بالتنسيق فقط");
+            }
         }
 
         if (options.Count < 2)
@@ -164,11 +194,11 @@ public sealed partial class TextQuestionReader : IQuestionReader
         }
 
         return new ExtractedQuestion(order, null, string.Join("\n", block.Stem).Trim(), options, correct,
-            detector, confidence, $"سؤال {block.Number} · سطر {block.Line}", issues);
+            detectorName, confidence, $"سؤال {block.Number} · {block.Location}", issues);
     }
 
     /// <summary>يوحّد الحروف المتكافئة: "ا" = "أ"، و"ه" = "هـ"، واللاتينية بأحرف صغيرة.</summary>
-    private static string NormalizeLabel(string label) => label switch
+    public static string NormalizeLabel(string label) => label switch
     {
         "ا" or "إ" or "آ" => "أ",
         "ه" => "هـ",
@@ -191,4 +221,21 @@ public sealed partial class TextQuestionReader : IQuestionReader
 
     [GeneratedRegex(@"(?<n>\d{1,4})\s*[-.):=]\s*(?<l>" + Letters + @")(?![\p{L}])")]
     private static partial Regex KeyPair();
+}
+
+/// <summary>قارئ الملفات النصية (TXT وMD) للأسئلة المرقّمة، عبر المحلل المشترك.</summary>
+public sealed class TextQuestionReader : IQuestionReader
+{
+    public string Name => "text";
+    public string Version => "1.1";
+    public bool CanRead(string extension) => extension is "txt" or "md";
+
+    public ReaderResult Read(byte[] content)
+    {
+        var (text, _) = TextDecoding.Decode(content);
+        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')
+            .Select((t, i) => new SourceLine(t, $"سطر {i + 1}"));
+        var (questions, warnings) = LineQuestionParser.Parse(lines);
+        return new ReaderResult(Name, Version, questions, warnings);
+    }
 }

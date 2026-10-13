@@ -60,5 +60,5 @@ public sealed class ReaderRegistry(IEnumerable<IQuestionReader> readers)
     public IReadOnlyList<string> SupportedExtensions =>
         new[] { "txt", "md", "gift", "docx", "xlsx", "xls", "doc", "pdf" }.Where(e => For(e) is not null).ToList();
 
-    public static ReaderRegistry Default() => new([new GiftReader(), new TextQuestionReader()]);
+    public static ReaderRegistry Default() => new([new GiftReader(), new TextQuestionReader(), new DocxReader(), new XlsxReader()]);
 }

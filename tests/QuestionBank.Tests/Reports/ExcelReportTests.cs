@@ -39,7 +39,7 @@ public sealed class ExcelReportTests : IDisposable
         const string txt = "1. =SUM(A1:A9) سؤال خطر؟\nأ) س\n*ب) ص\n\n2. سؤال بلا إجابة؟\nأ) ل\nب) م\n";
         _kit.WriteFile("مجلد/أ.txt", txt);
         _kit.WriteFile("مجلد/ب.txt", txt);
-        _kit.WriteFile("مجلد/ج.docx", "x");
+        _kit.WriteFile("مجلد/ج.pdf", "x");
         await _kit.ScanAsync();
         await using var db = _kit.CreateDb();
         var extraction = new ExtractionService(db, ReaderRegistry.Default(), _kit.Time);

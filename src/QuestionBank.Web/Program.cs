@@ -72,6 +72,20 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 
+// ترويسات أمان لكل استجابة. CSP يمنع أي سكربت أو اتصال خارجي (الواجهة لا تستخدم أي مصدر خارجي).
+// style-src يسمح بالأنماط المضمنة لأن الواجهة تضبط بعض الأبعاد ديناميكيًا؛ السكربتات تبقى من التطبيق فقط.
+app.Use(async (ctx, next) =>
+{
+    var h = ctx.Response.Headers;
+    h["X-Content-Type-Options"] = "nosniff";
+    h["X-Frame-Options"] = "DENY";
+    h["Referrer-Policy"] = "no-referrer";
+    h["Content-Security-Policy"] =
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+        "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+    await next();
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 

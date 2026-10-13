@@ -11,6 +11,8 @@
 - **الأفكار والخطة التفصيلية:** [`docs/interface/PROPOSAL_AR.md`](docs/interface/PROPOSAL_AR.md)
 - **النموذج التفاعلي للواجهة:** [`docs/interface/prototype.html`](docs/interface/prototype.html)
 
+- **النشر على Windows Server وIIS:** [`deploy/README_AR.md`](deploy/README_AR.md)
+
 ## البناء والاختبار
 
 يتطلب .NET SDK 10.

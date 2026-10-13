@@ -160,6 +160,19 @@ public sealed class SecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task SecurityHeaders_AreSentOnEveryResponse_IncludingAnonymous()
+    {
+        var client = Client();
+        var response = await client.GetAsync("/health");
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
+        var csp = response.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("script-src 'self'", csp);
+        Assert.Contains("frame-ancestors 'none'", csp);
+        Assert.DoesNotContain("http", csp);
+    }
+
+    [Fact]
     public async Task ConfigPaths_NeverRevealsThePathsThemselves()
     {
         var client = Client(testAuth: true);

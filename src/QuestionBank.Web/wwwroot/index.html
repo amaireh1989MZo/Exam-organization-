@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>بنك الأسئلة الداخلي</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="الأقسام">
+    <div class="brand"><i aria-hidden="true">ب</i>بنك الأسئلة</div>
+    <button class="nav" data-view="dash" type="button">لوحة الحالة</button>
+    <button class="nav" data-view="folders" type="button">مجلد الشبكة <span class="n" id="n-queue">0</span></button>
+    <button class="nav" data-view="drop" type="button">إسقاط الملفات</button>
+    <button class="nav" data-view="review" type="button">المراجعة <span class="n" id="n-review">0</span></button>
+    <button class="nav" data-view="dups" type="button">التكرار <span class="n" id="n-dups">0</span></button>
+    <button class="nav" data-view="classify" type="button">التصنيف</button>
+    <button class="nav" data-view="export" type="button">سلة التصدير <span class="n" id="n-basket">0</span></button>
+    <div class="who"><b id="who-name">…</b><span id="who-roles"></span></div>
+  </nav>
+
+  <main>
+    <div class="banner bad" id="denied" hidden>صلاحياتك لا تشمل هذه الشاشة. تواصل مع مسؤول بنك الأسئلة.</div>
+
+    <!-- لوحة الحالة -->
+    <section data-screen="dash" hidden>
+      <div class="head">
+        <div><h1>لوحة الحالة</h1><p class="sub">جرد ملفات مجلد الشبكة. الجرد يسجّل الملفات فقط ولا يفتح محتواها ولا يعدّلها.</p></div>
+        <div class="actions">
+          <button class="btn primary" id="btn-scan" type="button">بدء الجرد</button>
+          <button class="btn" id="btn-report" type="button">تقرير Excel</button>
+          <button class="btn" id="btn-abandon" type="button" hidden>إيقاف العملية نهائيًا</button>
+          <span class="confirm" id="abandon-confirm" hidden>
+            إيقاف نهائي؟ الجرد التالي يبدأ من جديد.
+            <button class="btn danger sm" id="abandon-yes" type="button">نعم، أوقف</button>
+            <button class="btn sm" id="abandon-no" type="button">لا</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="banner warn" id="problem" hidden></div>
+
+      <div class="grid g5">
+        <div class="panel stat"><div class="k">ملفات مسجلة</div><div class="v" id="s-total">–</div><div class="s" id="s-total-sub"></div></div>
+        <div class="panel stat"><div class="k">بانتظار المعالجة</div><div class="v" id="s-pending">–</div></div>
+        <div class="panel stat"><div class="k">مكتمل</div><div class="v ok" id="s-completed">–</div></div>
+        <div class="panel stat"><div class="k">فشل</div><div class="v bad" id="s-failed">–</div></div>
+        <div class="panel stat"><div class="k">مفقود من المصدر</div><div class="v muted" id="s-missing">–</div></div>
+      </div>
+
+      <div class="grid g2">
+        <div class="panel">
+          <h2 id="run-title">عملية الجرد</h2>
+          <div id="run-body" class="muted">لم يُجرَ أي جرد بعد. اضغط «بدء الجرد».</div>
+        </div>
+        <div class="panel">
+          <h2>الصيغ</h2>
+          <div id="exts" class="muted">لا توجد ملفات بعد.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- إسقاط الملفات -->
+    <section data-screen="drop" hidden>
+      <div class="head">
+        <div><h1>إسقاط الملفات</h1><p class="sub">اسحب ملفات أو مجلدًا كاملًا. تُحفظ نسخة في مجلد النتائج، والمكرر يُكشف ببصمة المحتوى. <span id="readable-note"></span></p></div>
+      </div>
+      <label class="drop" id="dropzone" for="picker">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M24 31V9"/><path d="m15 18 9-9 9 9"/><path d="M8 30v7a3 3 0 0 0 3 3h26a3 3 0 0 0 3-3v-7"/></svg>
+        <span class="big">اسحب ملفاتك أو مجلدًا هنا</span>
+        <span class="muted" id="drop-hint">أو اضغط للاختيار</span>
+      </label>
+      <input type="file" id="picker" multiple hidden>
+      <div class="grid g2 align-start" style="margin-top:16px">
+        <div class="panel">
+          <h2>الملفات</h2>
+          <div class="files" id="file-list"><div class="empty">لم يُرفع أي ملف بعد.</div></div>
+        </div>
+        <div class="panel" id="qpanel">
+          <h2 id="qpanel-title">الأسئلة المستخرجة</h2>
+          <div id="qpanel-body" class="muted">اختر ملفًا لعرض أسئلته.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- المراجعة -->
+    <section data-screen="review" hidden>
+      <div class="head">
+        <div><h1>المراجعة</h1><p class="sub">اضغط على خيار لتعيينه إجابة صحيحة. التصحيح يُحفظ منفصلًا، والإجابة الأصلية في الملف لا تتغير. كل عملية تُسجَّل باسمك.</p></div>
+        <div class="muted keys"><kbd>J</kbd> / <kbd>K</kbd> تنقل · <kbd>A</kbd> اعتماد · <kbd>F</kbd> تعليم للجنة</div>
+      </div>
+      <details class="panel" id="rv-assign" hidden style="margin-bottom:16px">
+        <summary>توزيع المراجعة على المراجعين</summary>
+        <form id="rv-assign-form" class="field">
+          <input id="as-reviewer" placeholder="حساب المراجع، مثل CORP\ahmad" required size="24">
+          <input id="as-folder" placeholder="مجلد (اختياري)، مثل إداري/2023" size="22">
+          <input id="as-count" type="number" min="1" max="5000" value="50" style="width:90px" required>
+          <button class="btn primary" type="submit">إسناد</button>
+        </form>
+        <div id="as-progress" class="hist"></div>
+      </details>
+      <div class="split">
+        <div class="panel">
+          <label class="field" style="margin-top:0"><input type="checkbox" id="rv-mine"> المسندة إليّ فقط</label>
+          <div class="actions filters" id="rv-filters"></div>
+          <div class="qlist" id="rv-list" role="listbox" aria-label="الأسئلة"></div>
+          <div class="actions" style="margin-top:8px"><button class="btn sm" id="rv-more" type="button" hidden>عرض المزيد</button></div>
+        </div>
+        <div class="panel" id="rv-detail"><div class="muted">لا توجد أسئلة في هذه القائمة.</div></div>
+      </div>
+    </section>
+
+    <!-- سلة التصدير -->
+    <section data-screen="export" hidden>
+      <div class="head">
+        <div><h1>سلة التصدير</h1><p class="sub">اسحب الأسئلة المعتمدة إلى السلة، أو اضغط «أضف». قبل حفظ الملف يُعاد قراءته ويُقارن بالأصل، والملف الذي لا يجتاز الفحص لا يُحفظ.</p></div>
+      </div>
+      <div class="grid g2 align-start">
+        <div class="panel">
+          <h2>أسئلة معتمدة</h2>
+          <div class="actions" style="margin-bottom:8px"><button class="btn sm" id="ex-add-all" type="button">أضف الكل</button></div>
+          <div class="qlist" id="ex-approved"></div>
+        </div>
+        <div class="panel">
+          <h2>السلة</h2>
+          <div class="queue basket" id="ex-basket" aria-label="سلة التصدير. أفلت الأسئلة هنا"></div>
+          <div class="opts-x">
+            <label><input type="checkbox" id="ex-cat" checked> فئات في Moodle: لكل مؤشر، أو لمجلد المصدر إن لم يُصنَّف السؤال</label>
+            <label><input type="checkbox" id="ex-shuffle"> السماح لـ Moodle بخلط الخيارات</label>
+          </div>
+          <div class="actions" style="margin-top:12px">
+            <button class="btn primary" id="ex-gift" type="button">تصدير GIFT</button>
+            <button class="btn primary" id="ex-xml" type="button">تصدير Moodle XML</button>
+            <button class="btn" id="ex-clear" type="button">تفريغ السلة</button>
+          </div>
+          <div id="ex-result"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>عمليات التصدير السابقة</h2>
+        <div id="ex-history" class="muted">لا توجد بعد.</div>
+      </div>
+    </section>
+
+    <!-- التكرار -->
+    <section data-screen="dups" hidden>
+      <div class="head">
+        <div><h1>التكرار</h1><p class="sub">أسئلة متطابقة بعد تجاهل التشكيل وصور الحروف وترتيب الخيارات. لا يُحذف أي سؤال تلقائيًا؛ القرار للجنة.</p></div>
+      </div>
+      <div class="actions filters" id="dup-filters"></div>
+      <div id="dup-groups"></div>
+    </section>
+
+    <!-- التصنيف -->
+    <section data-screen="classify" hidden>
+      <div class="head">
+        <div><h1>التصنيف على الإطار</h1><p class="sub">اسحب السؤال إلى المؤشر، أو اضغط اقتراحًا. المؤشرات من الإطار المستورد فقط ولا تُنشأ من هنا. الاقتراحات الحالية نصية مؤقتة حتى تشغيل النموذج المحلي، ولا تُطبَّق تلقائيًا.</p></div>
+      </div>
+      <div class="panel" style="margin-bottom:16px">
+        <div class="actions">
+          <label class="field" style="margin:0">الإطار: <select id="fw-select"></select></label>
+          <span class="muted" id="fw-stats"></span>
+        </div>
+        <details style="margin-top:10px">
+          <summary>استيراد إطار من Excel</summary>
+          <form id="fw-import" class="field">
+            <input type="file" id="fw-file" accept=".xlsx" required>
+            <input id="fw-name" placeholder="اسم الإطار" required>
+            <input id="fw-version" placeholder="الإصدار" required size="8">
+            <button class="btn primary" type="submit">استيراد</button>
+          </form>
+          <div id="fw-import-result"></div>
+        </details>
+      </div>
+      <div class="split">
+        <div class="panel"><h2>أسئلة بلا مؤشر</h2><div id="cl-questions" class="qlist"></div></div>
+        <div class="panel"><h2 id="fw-title">الإطار</h2><div id="fw-tree"></div></div>
+      </div>
+    </section>
+
+    <!-- مجلد الشبكة -->
+    <section data-screen="folders" hidden>
+      <div class="head">
+        <div><h1>مجلد الشبكة</h1><p class="sub">المجلدات كما سجّلها الجرد. اسحب مجلدًا إلى قائمة المعالجة، أو استخدم زر «أضف». الملفات تبقى في مكانها ولا يُرفع شيء.</p></div>
+      </div>
+      <div class="grid g2 align-start">
+        <div class="panel">
+          <h2>بنك الأسئلة <small class="muted">(للقراءة فقط)</small></h2>
+          <div id="tree-empty" class="muted" hidden>لا توجد مجلدات بعد. شغّل الجرد من لوحة الحالة أولًا.</div>
+          <ul class="tree" id="tree" role="tree" aria-label="مجلدات المصدر"></ul>
+        </div>
+        <div class="panel">
+          <h2>قائمة المعالجة</h2>
+          <p class="note">تُعالج الطلبات بالترتيب. الأسئلة تُستخرج الآن من ملفات TXT وGIFT، وباقي الصيغ تبقى بانتظار قارئها.</p>
+          <div class="queue" id="queue" aria-label="قائمة المعالجة. أفلت مجلدًا هنا">
+            <div class="empty" id="queue-empty">أفلت مجلدًا هنا</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toast-msg"></span><button id="toast-undo" type="button" hidden>تراجع</button></div>
+<script src="app.js"></script>
+</body>
+</html>

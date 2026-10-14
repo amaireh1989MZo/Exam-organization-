@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/QuestionBank.Core/QuestionBank.Core.csproj" />
+    <Project Path="src/QuestionBank.Web/QuestionBank.Web.csproj" />
+    <Project Path="src/QuestionBank.Worker/QuestionBank.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/QuestionBank.Tests/QuestionBank.Tests.csproj" />
+  </Folder>
+</Solution>

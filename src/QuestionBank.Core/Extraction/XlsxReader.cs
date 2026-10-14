@@ -1,0 +1,354 @@
+using System.Globalization;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
+using QuestionBank.Core.Quality;
+
+namespace QuestionBank.Core.Extraction;
+
+/// <summary>
+/// قارئ Excel (XLSX) عام بمطابقة أعمدة تلقائية من عناوينها (عربية أو إنجليزية).
+/// يبحث عن صف العناوين في أول 10 صفوف من كل ورقة، ويتعرف على: نص السؤال، والخيارات، والإجابة، والرمز.
+/// الإجابة تُقبل حرفًا (ب، b) أو رقمًا (2) أو نص الخيار نفسه.
+/// الورقة التي لا تُعرف أعمدتها تُذكر في التحذيرات (تحتاج مطابقة يدوية في الواجهة لاحقًا).
+/// الصور العائمة فوق الخلايا تُنسب إلى الصف الذي تبدأ فيه: عمود الخيار يعني ذلك الخيار، وأي عمود آخر يعني نص السؤال.
+/// </summary>
+public sealed class XlsxReader(IReadOnlyList<ColumnTemplateMap>? templates = null) : IQuestionReader
+{
+    public const string NeedsMappingMarker = "تحتاج مطابقة يدوية";
+
+    public string Name => "xlsx";
+    public string Version => "1.1";
+    public bool CanRead(string extension) => extension == "xlsx";
+
+    /// <summary>مفتاح صف العناوين: العناوين المطبَّعة بترتيب الأعمدة. يُستخدم لمطابقة القوالب المحفوظة.</summary>
+    public static string HeaderKey(IEnumerable<string> headers) =>
+        string.Join("|", headers.Select(TextNormalizer.Normalize));
+
+    /// <summary>أول صفوف كل ورقة كنصوص، لعرضها في شاشة المطابقة اليدوية.</summary>
+    public static IReadOnlyList<SheetPreview> Preview(byte[] content, int maxRows = HeaderSearchRows)
+    {
+        using var doc = SpreadsheetDocument.Open(new MemoryStream(content), false);
+        var wb = doc.WorkbookPart;
+        if (wb?.Workbook?.Sheets is null)
+            return [];
+        var shared = wb.SharedStringTablePart?.SharedStringTable?.Elements<SharedStringItem>().Select(s => s.InnerText).ToArray() ?? [];
+        var result = new List<SheetPreview>();
+        foreach (var sheet in wb.Workbook.Sheets.Elements<Sheet>())
+        {
+            if (sheet.Id?.Value is not { } rid || wb.GetPartById(rid) is not WorksheetPart part)
+                continue;
+            var rows = ReadRows(part, shared).Take(maxRows).ToList();
+            var width = rows.Count == 0 ? 0 : rows.Max(r => r.Cells.Keys.DefaultIfEmpty(-1).Max()) + 1;
+            result.Add(new SheetPreview(sheet.Name?.Value ?? "ورقة",
+                rows.Select(r => new PreviewRow(r.RowNo, Enumerable.Range(0, width).Select(c => r.Cells.GetValueOrDefault(c, "")).ToList())).ToList()));
+        }
+        return result;
+    }
+
+    private const int HeaderSearchRows = 10;
+
+    // العناوين بعد التطبيع (TextNormalizer): بلا همزات ولا تاء مربوطة ولا ترقيم، وبأحرف صغيرة.
+    private static readonly HashSet<string> StemHeaders =
+        ["السوال", "نص السوال", "السوال نص", "question", "question text", "stem", "item", "نص الفقره", "الفقره", "السؤال"];
+    private static readonly HashSet<string> AnswerHeaders =
+        ["الاجابه", "الاجابه الصحيحه", "الصحيح", "الجواب", "الجواب الصحيح", "مفتاح الاجابه", "answer", "correct", "correct answer", "key", "answer key"];
+    private static readonly HashSet<string> CodeHeaders =
+        ["الرمز", "رمز السوال", "كود", "code", "id", "question id", "رقم السوال", "المعرف"];
+
+    private static readonly string[][] OptionLetterAliases =
+    [
+        ["ا", "a", "1"], ["ب", "b", "2"], ["ج", "c", "3"], ["د", "d", "4"], ["ه", "e", "5"], ["و", "f", "6"]
+    ];
+
+    public ReaderResult Read(byte[] content)
+    {
+        SpreadsheetDocument doc;
+        try
+        {
+            doc = SpreadsheetDocument.Open(new MemoryStream(content), false);
+        }
+        catch (Exception ex) when (ex is DocumentFormat.OpenXml.Packaging.OpenXmlPackageException or InvalidDataException or FileFormatException)
+        {
+            throw new FormatException("ملف Excel تالف أو ليس XLSX.", ex);
+        }
+
+        using (doc)
+        {
+            var wb = doc.WorkbookPart;
+            if (wb?.Workbook?.Sheets is null)
+                return new ReaderResult(Name, Version, [], ["المصنف فارغ."]);
+            var shared = wb.SharedStringTablePart?.SharedStringTable?.Elements<SharedStringItem>().Select(s => s.InnerText).ToArray() ?? [];
+
+            var questions = new List<ExtractedQuestion>();
+            var warnings = new List<string>();
+            foreach (var sheet in wb.Workbook.Sheets.Elements<Sheet>())
+            {
+                if (sheet.Id?.Value is not { } rid || wb.GetPartById(rid) is not WorksheetPart part)
+                    continue;
+                var sheetName = sheet.Name?.Value ?? "ورقة";
+                var rows = ReadRows(part, shared);
+                if (rows.Count == 0)
+                    continue;
+
+                var map = FindHeader(rows);
+                if (map is null)
+                {
+                    warnings.Add($"ورقة «{sheetName}»: لم تُعرف أعمدة السؤال والخيارات من العناوين؛ {NeedsMappingMarker}.");
+                    continue;
+                }
+
+                var images = SheetImages(part);
+                var used = new HashSet<int>();
+                foreach (var (rowNo, cells) in rows.Where(r => r.RowNo > map.HeaderRow))
+                {
+                    var stem = Cell(cells, map.Stem);
+                    var rowImages = images.GetValueOrDefault(rowNo);
+                    if (string.IsNullOrWhiteSpace(stem) && rowImages?.Any(i => i.Col == map.Stem) != true)
+                        continue;
+                    used.Add(rowNo);
+                    questions.Add(BuildQuestion(questions.Count + 1, sheetName, rowNo, cells, map, stem, rowImages));
+                }
+                var stray = images.Keys.Count(r => r > map.HeaderRow && !used.Contains(r));
+                if (stray > 0)
+                    warnings.Add($"ورقة «{sheetName}»: {stray} صف فيه صورة بلا سؤال، لم تُنسب صوره لأي سؤال.");
+            }
+            return new ReaderResult(Name, Version, questions, warnings);
+        }
+    }
+
+    private sealed record ColumnMap(int HeaderRow, int Stem, IReadOnlyList<int> Options, int? Answer, int? Code);
+
+    private sealed record CellImage(int Col, ExtractedImage? Image, string? Note);
+
+    private static ExtractedQuestion BuildQuestion(int order, string sheet, int rowNo, Dictionary<int, string> cells, ColumnMap map, string stem,
+        List<CellImage>? rowImages)
+    {
+        var issues = new List<string>();
+        rowImages ??= [];
+        // نحتفظ بموقع كل خيار غير فارغ (أو صورته محتواه) لنفهم الإجابة إذا أُعطيت كحرف أو رقم عمود.
+        var options = map.Options.Select((col, pos) => (Pos: pos, Col: col, Text: Cell(cells, col).Trim()))
+            .Where(o => o.Text.Length > 0 || rowImages.Any(i => i.Col == o.Col && i.Image is not null)).ToList();
+        int? correct = null;
+        var detector = AnswerDetectors.None;
+        var confidence = ExtractionConfidence.High;
+
+        var answerRaw = map.Answer is { } ac ? Cell(cells, ac).Trim() : "";
+        if (answerRaw.Length > 0)
+        {
+            var norm = TextNormalizer.Normalize(answerRaw);
+            var byLetter = Array.FindIndex(OptionLetterAliases, a => a.Contains(norm));
+            if (byLetter >= 0 && options.FindIndex(o => o.Pos == byLetter) is var idx and >= 0)
+                correct = idx;
+            else
+            {
+                var byText = options.FindIndex(o => TextNormalizer.Normalize(o.Text) == norm);
+                if (byText >= 0) correct = byText;
+            }
+            if (correct is null)
+                issues.Add($"عمود الإجابة «{answerRaw}» لا يطابق أي خيار");
+            else
+                detector = "answer-column";
+        }
+
+        if (correct is null)
+        {
+            confidence = ExtractionConfidence.Low;
+            if (answerRaw.Length == 0)
+                issues.Add("عمود الإجابة فارغ أو غير موجود");
+        }
+        if (options.Count < 2)
+        {
+            issues.Add("أقل من خيارين");
+            confidence = ExtractionConfidence.Low;
+        }
+        var texts = options.Select(o => o.Text).ToList();
+        var images = new List<ExtractedImage>();
+        foreach (var ci in rowImages)
+        {
+            if (ci.Note is not null)
+            {
+                issues.Add(ci.Note);
+                confidence = ExtractionConfidence.Low;
+                continue;
+            }
+            var optionIndex = options.FindIndex(o => o.Col == ci.Col);
+            images.Add(ci.Image! with { OptionIndex = optionIndex >= 0 ? optionIndex : null });
+        }
+        if (images.Count > 0)
+        {
+            issues.Add($"سؤال مصوّر ({images.Count} صورة): تحقق من موضع الصور");
+            if (images.Any(m => !ExtractedImage.IsDisplayable(m.ContentType)))
+                issues.Add("صورة بصيغة لا يعرضها المتصفح ولا Moodle (مثل EMF أو WMF): تحتاج تحويلًا");
+            if (confidence == ExtractionConfidence.High) confidence = ExtractionConfidence.Medium;
+        }
+        var identities = options.Select((o, i) => o.Text + "|" + string.Join(",", images.Where(m => m.OptionIndex == i)
+            .Select(m => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(m.Content))))).ToList();
+        if (identities.Count != identities.Distinct().Count())
+        {
+            issues.Add("خيارات مكررة");
+            if (confidence == ExtractionConfidence.High) confidence = ExtractionConfidence.Medium;
+        }
+
+        var code = map.Code is { } cc ? Cell(cells, cc).Trim() : null;
+        return new ExtractedQuestion(order, string.IsNullOrEmpty(code) ? null : code, stem.Trim(), texts, correct,
+            detector, confidence, $"ورقة {sheet} · صف {rowNo}", issues, images.Count == 0 ? null : images);
+    }
+
+    /// <summary>
+    /// الصور العائمة في الورقة حسب صف بدايتها (مرقّم من 1 كما في Excel) وعمودها.
+    /// الصورة المرتبطة بملف خارجي أو الأكبر من الحد تُسجَّل ملاحظةً بدل الصورة.
+    /// </summary>
+    private static Dictionary<int, List<CellImage>> SheetImages(WorksheetPart part)
+    {
+        var result = new Dictionary<int, List<CellImage>>();
+        var drawings = part.DrawingsPart;
+        if (drawings?.WorksheetDrawing is null)
+            return result;
+        foreach (var anchor in drawings.WorksheetDrawing.ChildElements)
+        {
+            var from = anchor switch
+            {
+                DocumentFormat.OpenXml.Drawing.Spreadsheet.TwoCellAnchor t => t.FromMarker,
+                DocumentFormat.OpenXml.Drawing.Spreadsheet.OneCellAnchor o => o.FromMarker,
+                _ => null
+            };
+            if (from is null
+                || !int.TryParse(from.RowId?.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var row)
+                || !int.TryParse(from.ColumnId?.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var col))
+                continue;
+            foreach (var blip in anchor.Descendants<DocumentFormat.OpenXml.Drawing.Blip>())
+            {
+                CellImage item;
+                var embed = blip.Embed?.Value;
+                if (string.IsNullOrWhiteSpace(embed))
+                    item = new CellImage(col, null, "صورة مرتبطة بملف خارجي وليست داخل الملف");
+                else if (drawings.TryGetPartById(embed, out var p) && p is ImagePart image)
+                {
+                    using var stream = image.GetStream(FileMode.Open, FileAccess.Read);
+                    using var ms = new MemoryStream();
+                    stream.CopyTo(ms);
+                    item = ms.Length > ExtractedImage.MaxBytes
+                        ? new CellImage(col, null, "صورة أكبر من 5 ميغابايت لم تُحفظ")
+                        : new CellImage(col, new ExtractedImage(ms.ToArray(), image.ContentType.ToLowerInvariant()), null);
+                }
+                else
+                    item = new CellImage(col, null, "صورة لم تُقرأ من الملف");
+                // صفوف Excel في الرسم تبدأ من 0، وفي الخلايا من 1.
+                (result.TryGetValue(row + 1, out var list) ? list : result[row + 1] = []).Add(item);
+            }
+        }
+        foreach (var list in result.Values)
+            list.Sort((a, b) => a.Col.CompareTo(b.Col));
+        return result;
+    }
+
+    private ColumnMap? FindHeader(List<(int RowNo, Dictionary<int, string> Cells)> rows)
+    {
+        // القالب المحفوظ له الأولوية: صف عناوين مطابق تمامًا لما علّمه المستخدم.
+        if (templates is { Count: > 0 })
+        {
+            foreach (var (rowNo, cells) in rows.Take(HeaderSearchRows))
+            {
+                var ordered = cells.OrderBy(c => c.Key).ToList();
+                var key = HeaderKey(ordered.Select(c => c.Value));
+                var t = templates.FirstOrDefault(x => x.HeaderKey == key);
+                if (t is null)
+                    continue;
+                int? Col(string? header) => header is null ? null
+                    : ordered.Where(c => TextNormalizer.Normalize(c.Value) == TextNormalizer.Normalize(header)).Select(c => (int?)c.Key).FirstOrDefault();
+                var stemCol = Col(t.Stem);
+                var optionCols = t.Options.Select(Col).Where(c => c is not null).Select(c => c!.Value).ToList();
+                if (stemCol is not null && optionCols.Count >= 2)
+                    return new ColumnMap(rowNo, stemCol.Value, optionCols, Col(t.Answer), Col(t.Code));
+            }
+        }
+
+        foreach (var (rowNo, cells) in rows.Take(HeaderSearchRows))
+        {
+            int? stem = null, answer = null, code = null;
+            var options = new List<(int Col, int Order)>();
+            foreach (var (col, raw) in cells)
+            {
+                var h = TextNormalizer.Normalize(raw);
+                if (h.Length == 0) continue;
+                if (stem is null && StemHeaders.Contains(h)) { stem = col; continue; }
+                if (answer is null && AnswerHeaders.Contains(h)) { answer = col; continue; }
+                if (code is null && CodeHeaders.Contains(h)) { code = col; continue; }
+                if (OptionOrder(h) is { } order) options.Add((col, order));
+            }
+            if (stem is not null && options.Count >= 2)
+                return new ColumnMap(rowNo, stem.Value, options.OrderBy(o => o.Order).ThenBy(o => o.Col).Select(o => o.Col).ToList(), answer, code);
+        }
+        return null;
+    }
+
+    /// <summary>ترتيب عمود الخيار من عنوانه: "أ"، "البديل 2"، "الخيار ج"، "Option B"، "Choice 3"، "A"...</summary>
+    private static int? OptionOrder(string h)
+    {
+        var parts = h.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string? token = parts.Length switch
+        {
+            1 => parts[0],
+            2 when parts[0] is "البديل" or "بديل" or "الخيار" or "خيار" or "option" or "choice" or "الاختيار" or "اختيار" => parts[1],
+            _ => null
+        };
+        if (token is null)
+            return null;
+        var index = Array.FindIndex(OptionLetterAliases, a => a.Contains(token));
+        // الرقم وحده عنوانًا ("1") قد يكون رقم السؤال؛ نقبل الأرقام فقط مع كلمة مثل "البديل".
+        if (index >= 0 && parts.Length == 1 && char.IsDigit(token[0]))
+            return null;
+        return index >= 0 ? index : null;
+    }
+
+    private static string Cell(Dictionary<int, string> cells, int col) => cells.GetValueOrDefault(col, "");
+
+    private static List<(int RowNo, Dictionary<int, string> Cells)> ReadRows(WorksheetPart part, string[] shared)
+    {
+        var result = new List<(int, Dictionary<int, string>)>();
+        var data = part.Worksheet?.GetFirstChild<SheetData>();
+        if (data is null)
+            return result;
+        var implicitRow = 0;
+        foreach (var row in data.Elements<Row>())
+        {
+            implicitRow = (int?)row.RowIndex?.Value ?? implicitRow + 1;
+            var cells = new Dictionary<int, string>();
+            var implicitCol = 0;
+            foreach (var cell in row.Elements<Cell>())
+            {
+                var col = cell.CellReference?.Value is { } r ? ColumnIndex(r) : implicitCol;
+                implicitCol = col + 1;
+                var value = CellText(cell, shared);
+                if (value.Length > 0)
+                    cells[col] = value;
+            }
+            if (cells.Count > 0)
+                result.Add((implicitRow, cells));
+        }
+        return result;
+    }
+
+    private static string CellText(Cell cell, string[] shared)
+    {
+        var type = cell.DataType?.Value;
+        if (type == CellValues.SharedString)
+            return int.TryParse(cell.CellValue?.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) && i >= 0 && i < shared.Length ? shared[i] : "";
+        if (type == CellValues.InlineString)
+            return cell.InlineString?.InnerText ?? "";
+        if (type == CellValues.Boolean)
+            return cell.CellValue?.Text == "1" ? "TRUE" : "FALSE";
+        return cell.CellValue?.Text ?? "";
+    }
+
+    private static int ColumnIndex(string reference)
+    {
+        var col = 0;
+        foreach (var c in reference)
+        {
+            if (!char.IsLetter(c)) break;
+            col = col * 26 + (char.ToUpperInvariant(c) - 'A' + 1);
+        }
+        return col - 1;
+    }
+}

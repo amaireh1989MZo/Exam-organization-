@@ -273,3 +273,71 @@ public sealed class TextCorrectionTests : IDisposable
         Assert.Equal(1, parsed.CorrectIndex);
     }
 }
+
+public sealed class AssignmentTests : IDisposable
+{
+    private readonly InventoryTestKit _kit = new();
+
+    public void Dispose() => _kit.Dispose();
+
+    private async Task SeedAsync()
+    {
+        var txt = string.Join("\n\n", Enumerable.Range(1, 4).Select(i => $"{i}. سؤال {i}؟\nأ) س\n" + (i % 2 == 0 ? "*" : "") + "ب) ص"));
+        _kit.WriteFile("إداري/أ.txt", txt);
+        _kit.WriteFile("محاسبة/ب.txt", txt);
+        await _kit.ScanAsync();
+        await using var db = _kit.CreateDb();
+        var extraction = new ExtractionService(db, ReaderRegistry.Default(), _kit.Time);
+        foreach (var f in await db.SourceFiles.ToListAsync())
+            await extraction.ExtractAsync(Encoding.UTF8.GetBytes(txt), "txt", f.Id, null, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Assign_TakesUnassignedOpenQuestions_FromFolder_NeedsReviewFirst()
+    {
+        await SeedAsync();
+        await using var db = _kit.CreateDb();
+        var svc = new ReviewService(db, _kit.Time);
+
+        Assert.Equal(3, await svc.AssignAsync(new AssignmentRequest("CORP\\ahmad", "إداري", 3), "CORP\\m", CancellationToken.None));
+        Assert.Equal(1, await svc.AssignAsync(new AssignmentRequest("CORP\\sara", "إداري/", 10), "CORP\\m", CancellationToken.None));
+
+        var ahmad = await db.Questions.AsNoTracking().Where(q => q.AssignedTo == "CORP\\ahmad").ToListAsync();
+        Assert.Equal(2, ahmad.Count(q => q.ReviewStatus == QuestionReviewStatus.NeedsReview)); // تحتاج مراجعة أولًا
+        Assert.All(await db.Questions.AsNoTracking().Where(q => q.AssignedTo != null).ToListAsync(),
+            q => Assert.NotNull(q.SourceFileId));
+        Assert.Equal(4, await db.Questions.CountAsync(q => q.AssignedTo == null)); // أسئلة المحاسبة لم تُمس
+        Assert.Contains(await db.AuditLog.ToListAsync(), a => a.Action == "Assign" && a.NewValue == "CORP\\ahmad:3");
+    }
+
+    [Fact]
+    public async Task MineFilter_AndProgress_AndUnassignOnlyOpen()
+    {
+        await SeedAsync();
+        await using var db = _kit.CreateDb();
+        var svc = new ReviewService(db, _kit.Time);
+        // أربعة بلا إجابة تُسند أولًا، ثم واحد بإجابة معلَّمة
+        await svc.AssignAsync(new AssignmentRequest("CORP\\ahmad", null, 5), "m", CancellationToken.None);
+        var mine = await svc.ListAsync(null, 0, 50, CancellationToken.None, assignedTo: "CORP\\ahmad");
+        Assert.Equal(5, mine.Total);
+
+        var approvable = mine.Items.First(i => i.EffectiveCorrectIndex is not null);
+        await svc.ApproveAsync(approvable.Id, "CORP\\ahmad", CancellationToken.None);
+        var progress = Assert.Single(await svc.ProgressAsync(CancellationToken.None));
+        Assert.Equal(("CORP\\ahmad", 5, 4, 1), (progress.Reviewer, progress.Assigned, progress.Open, progress.Approved));
+
+        Assert.Equal(4, await svc.UnassignOpenAsync("CORP\\ahmad", "m", CancellationToken.None));
+        Assert.Equal(1, await db.Questions.CountAsync(q => q.AssignedTo == "CORP\\ahmad")); // المعتمد يبقى باسمه
+    }
+
+    [Fact]
+    public async Task InvalidRequests_AssignNothing()
+    {
+        await SeedAsync();
+        await using var db = _kit.CreateDb();
+        var svc = new ReviewService(db, _kit.Time);
+        Assert.Equal(0, await svc.AssignAsync(new AssignmentRequest("  ", null, 5), "m", CancellationToken.None));
+        Assert.Equal(0, await svc.AssignAsync(new AssignmentRequest("CORP\\x", null, 0), "m", CancellationToken.None));
+        Assert.Equal(0, await svc.AssignAsync(new AssignmentRequest("CORP\\x", "غير-موجود", 5), "m", CancellationToken.None));
+    }
+}

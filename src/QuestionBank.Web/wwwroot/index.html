@@ -90,8 +90,19 @@
         <div><h1>المراجعة</h1><p class="sub">اضغط على خيار لتعيينه إجابة صحيحة. التصحيح يُحفظ منفصلًا، والإجابة الأصلية في الملف لا تتغير. كل عملية تُسجَّل باسمك.</p></div>
         <div class="muted keys"><kbd>J</kbd> / <kbd>K</kbd> تنقل · <kbd>A</kbd> اعتماد · <kbd>F</kbd> تعليم للجنة</div>
       </div>
+      <details class="panel" id="rv-assign" hidden style="margin-bottom:16px">
+        <summary>توزيع المراجعة على المراجعين</summary>
+        <form id="rv-assign-form" class="field">
+          <input id="as-reviewer" placeholder="حساب المراجع، مثل CORP\ahmad" required size="24">
+          <input id="as-folder" placeholder="مجلد (اختياري)، مثل إداري/2023" size="22">
+          <input id="as-count" type="number" min="1" max="5000" value="50" style="width:90px" required>
+          <button class="btn primary" type="submit">إسناد</button>
+        </form>
+        <div id="as-progress" class="hist"></div>
+      </details>
       <div class="split">
         <div class="panel">
+          <label class="field" style="margin-top:0"><input type="checkbox" id="rv-mine"> المسندة إليّ فقط</label>
           <div class="actions filters" id="rv-filters"></div>
           <div class="qlist" id="rv-list" role="listbox" aria-label="الأسئلة"></div>
           <div class="actions" style="margin-top:8px"><button class="btn sm" id="rv-more" type="button" hidden>عرض المزيد</button></div>

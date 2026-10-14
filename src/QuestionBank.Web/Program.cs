@@ -275,7 +275,7 @@ app.MapGet("/api/questions", async (long? uploadId, long? sourceFileId, Question
 
 var review = app.MapGroup("/api/review").RequireAuthorization(AppPolicies.Review);
 
-review.MapGet("/", async (string? status, int? skip, int? take, ReviewService service, CancellationToken ct) =>
+review.MapGet("/", async (string? status, int? skip, int? take, bool? mine, HttpContext ctx, ReviewService service, CancellationToken ct) =>
 {
     QuestionReviewStatus? filter = null;
     if (!string.IsNullOrEmpty(status))
@@ -284,8 +284,17 @@ review.MapGet("/", async (string? status, int? skip, int? take, ReviewService se
             return Results.BadRequest(new { message = "حالة غير معروفة." });
         filter = parsed;
     }
-    return Results.Ok(await service.ListAsync(filter, skip ?? 0, take ?? 100, ct));
+    return Results.Ok(await service.ListAsync(filter, skip ?? 0, take ?? 100, ct, mine == true ? UserName(ctx) : null));
 });
+
+review.MapGet("/assignments", async (ReviewService service, CancellationToken ct) => Results.Ok(await service.ProgressAsync(ct)))
+    .RequireAuthorization(AppPolicies.ManageBank);
+review.MapPost("/assignments", async (AssignmentRequest request, HttpContext ctx, ReviewService service, CancellationToken ct) =>
+    Results.Ok(new { assigned = await service.AssignAsync(request, UserName(ctx), ct) }))
+    .RequireAuthorization(AppPolicies.ManageBank);
+review.MapPost("/assignments/unassign", async (UnassignRequest request, HttpContext ctx, ReviewService service, CancellationToken ct) =>
+    Results.Ok(new { unassigned = await service.UnassignOpenAsync(request.Reviewer ?? "", UserName(ctx), ct) }))
+    .RequireAuthorization(AppPolicies.ManageBank);
 
 review.MapGet("/{id:long}/history", async (long id, ReviewService service, CancellationToken ct) =>
     Results.Ok(await service.HistoryAsync(id, ct)));
@@ -421,6 +430,8 @@ public sealed record EnqueueRequest(string? Path);
 public sealed record AnswerRequest(int? Index);
 
 public sealed record TextRequest(string? Text, string[]? Options);
+
+public sealed record UnassignRequest(string? Reviewer);
 
 public sealed record ClassifyRequest(long? IndicatorId, string? Method, double? Score);
 

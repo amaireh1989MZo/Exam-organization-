@@ -51,20 +51,27 @@ public sealed record ReviewItem(
 
 public sealed record ReviewPage(IReadOnlyDictionary<string, int> Counts, int Total, IReadOnlyList<ReviewItem> Items);
 
+public sealed record AssignmentRequest(string Reviewer, string? Folder, int Count);
+
+public sealed record ReviewerProgress(string Reviewer, int Assigned, int Open, int Approved, int Flagged);
+
 /// <summary>
 /// المراجعة: تصحيح الإجابة كطبقة منفصلة فوق الأصل، والاعتماد، والتعليم للجنة، وإعادة الفتح.
 /// كل عملية تُكتب في سجل التدقيق في المعاملة نفسها.
 /// </summary>
 public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
 {
-    public async Task<ReviewPage> ListAsync(QuestionReviewStatus? status, int skip, int take, CancellationToken cancellationToken)
+    public async Task<ReviewPage> ListAsync(QuestionReviewStatus? status, int skip, int take, CancellationToken cancellationToken, string? assignedTo = null)
     {
-        var counts = await db.Questions.AsNoTracking()
+        var scope = db.Questions.AsNoTracking().AsQueryable();
+        if (assignedTo is not null)
+            scope = scope.Where(q => q.AssignedTo == assignedTo);
+        var counts = await scope
             .GroupBy(q => q.ReviewStatus)
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key.ToString(), x => x.Count, cancellationToken);
 
-        var query = db.Questions.AsNoTracking().AsQueryable();
+        var query = scope;
         if (status is not null)
             query = query.Where(q => q.ReviewStatus == status);
         var total = await query.CountAsync(cancellationToken);
@@ -169,6 +176,73 @@ public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
                 : QuestionReviewStatus.NeedsReview;
             return (ReviewOutcome.Ok, AuditActions.Reopen, old, q.ReviewStatus.ToString());
         });
+
+    /// <summary>
+    /// يسند حتى Count سؤالًا غير مسند ويحتاج مراجعة (تحتاج مراجعة أولًا ثم بانتظار الاعتماد)، من مجلد معين إن طُلب.
+    /// يعيد عدد ما أُسند. يُسجَّل في سجل التدقيق.
+    /// </summary>
+    public async Task<int> AssignAsync(AssignmentRequest request, string user, CancellationToken cancellationToken)
+    {
+        var reviewer = request.Reviewer?.Trim() ?? "";
+        if (reviewer.Length == 0 || reviewer.Length > 256 || request.Count <= 0)
+            return 0;
+        var prefix = string.IsNullOrWhiteSpace(request.Folder) ? null : request.Folder.Trim().TrimEnd('/') + "/";
+        var candidates = db.Questions.Where(q => q.AssignedTo == null &&
+            (q.ReviewStatus == QuestionReviewStatus.NeedsReview || q.ReviewStatus == QuestionReviewStatus.AwaitingApproval));
+        if (prefix is not null)
+            candidates = candidates.Where(q => db.SourceFiles.Any(f => f.Id == q.SourceFileId && f.RelativePath.StartsWith(prefix)));
+        var picked = await candidates
+            .OrderBy(q => q.ReviewStatus == QuestionReviewStatus.NeedsReview ? 0 : 1).ThenBy(q => q.Id)
+            .Take(Math.Min(request.Count, 5000))
+            .ToListAsync(cancellationToken);
+        foreach (var q in picked)
+            q.AssignedTo = reviewer;
+        if (picked.Count > 0)
+        {
+            db.AuditLog.Add(new AuditEntry
+            {
+                AtUtc = time.GetUtcNow().UtcDateTime, User = user, Action = "Assign", EntityType = "ReviewBatch",
+                EntityId = picked[0].Id, NewValue = $"{reviewer}:{picked.Count}"
+            });
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        db.ChangeTracker.Clear();
+        return picked.Count;
+    }
+
+    /// <summary>يلغي إسناد ما لم يُراجَع بعد لمراجع معين (المعتمد والمعلَّم يبقيان باسمه للتتبع).</summary>
+    public async Task<int> UnassignOpenAsync(string reviewer, string user, CancellationToken cancellationToken)
+    {
+        var count = await db.Questions
+            .Where(q => q.AssignedTo == reviewer && (q.ReviewStatus == QuestionReviewStatus.NeedsReview || q.ReviewStatus == QuestionReviewStatus.AwaitingApproval))
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.AssignedTo, (string?)null), cancellationToken);
+        if (count > 0)
+        {
+            db.AuditLog.Add(new AuditEntry
+            {
+                AtUtc = time.GetUtcNow().UtcDateTime, User = user, Action = "Unassign", EntityType = "ReviewBatch", EntityId = 0,
+                OldValue = $"{reviewer}:{count}"
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            db.ChangeTracker.Clear();
+        }
+        return count;
+    }
+
+    public async Task<IReadOnlyList<ReviewerProgress>> ProgressAsync(CancellationToken cancellationToken)
+    {
+        var rows = await db.Questions.AsNoTracking().Where(q => q.AssignedTo != null)
+            .GroupBy(q => new { q.AssignedTo, q.ReviewStatus })
+            .Select(g => new { g.Key.AssignedTo, g.Key.ReviewStatus, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+        return rows.GroupBy(r => r.AssignedTo!)
+            .Select(g => new ReviewerProgress(g.Key, g.Sum(r => r.Count),
+                g.Where(r => r.ReviewStatus is QuestionReviewStatus.NeedsReview or QuestionReviewStatus.AwaitingApproval).Sum(r => r.Count),
+                g.Where(r => r.ReviewStatus == QuestionReviewStatus.Approved).Sum(r => r.Count),
+                g.Where(r => r.ReviewStatus == QuestionReviewStatus.Flagged).Sum(r => r.Count)))
+            .OrderBy(p => p.Reviewer, StringComparer.Ordinal)
+            .ToList();
+    }
 
     public async Task<IReadOnlyList<AuditEntry>> HistoryAsync(long questionId, CancellationToken cancellationToken) =>
         await db.AuditLog.AsNoTracking()

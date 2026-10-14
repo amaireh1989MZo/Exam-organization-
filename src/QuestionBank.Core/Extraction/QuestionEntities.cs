@@ -53,6 +53,9 @@ public sealed class Question
     public string? ReviewedBy { get; set; }
     public DateTime? ReviewedAtUtc { get; set; }
 
+    /// <summary>المراجع المسند إليه السؤال (اسم حسابه في الشبكة). null = غير مسند.</summary>
+    public string? AssignedTo { get; set; }
+
     /// <summary>طبقة تصحيح النص: نص السؤال كما صححه المراجع. null = النص الأصلي.</summary>
     public string? CorrectedText { get; set; }
 

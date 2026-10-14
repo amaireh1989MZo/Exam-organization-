@@ -78,6 +78,8 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.Property(x => x.ReaderName).HasMaxLength(32);
             e.Property(x => x.ReaderVersion).HasMaxLength(16);
             e.Property(x => x.ReviewedBy).HasMaxLength(256);
+            e.Property(x => x.AssignedTo).HasMaxLength(256);
+            e.HasIndex(x => new { x.AssignedTo, x.ReviewStatus });
             e.Ignore(x => x.EffectiveText);
             e.Ignore(x => x.EffectiveOptionsJson);
             e.Property(x => x.MatchStatus).HasConversion<string>().HasMaxLength(16);

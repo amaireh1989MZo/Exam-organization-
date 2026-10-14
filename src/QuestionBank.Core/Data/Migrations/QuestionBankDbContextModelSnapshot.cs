@@ -120,6 +120,10 @@ namespace QuestionBank.Core.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AssignedTo")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Confidence")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -252,6 +256,8 @@ namespace QuestionBank.Core.Data.Migrations
                     b.HasIndex("StemHash");
 
                     b.HasIndex("UploadId");
+
+                    b.HasIndex("AssignedTo", "ReviewStatus");
 
                     b.ToTable("Questions", t =>
                         {

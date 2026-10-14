@@ -51,7 +51,7 @@ function show(view) {
   if (view === 'dash') refreshStatus();
   if (view === 'folders') { loadRoot(); loadQueue(); }
   if (view === 'drop') loadUploads();
-  if (view === 'review') loadReview(true);
+  if (view === 'review') { loadReview(true); if (!$('#rv-assign').hidden) loadAssignments(); }
   if (view === 'export') loadExport();
   if (view === 'dups') loadDups();
   if (view === 'classify') loadFrameworks();
@@ -59,12 +59,15 @@ function show(view) {
 $$('.nav[data-view]').forEach(n => n.addEventListener('click', () => show(n.dataset.view)));
 
 /* ---------- user ---------- */
+let myRoles = [];
 const ROLE_AR = { Admin: 'مدير النظام', BankManager: 'مسؤول بنك الأسئلة', Reviewer: 'مراجع فني', Viewer: 'اطلاع' };
 async function loadMe() {
   try {
     const me = await api('GET', '/api/me');
     $('#who-name').textContent = me.name || '';
-    $('#who-roles').textContent = (me.roles || []).map(r => ROLE_AR[r] || r).join('، ');
+    myRoles = me.roles || [];
+    $('#who-roles').textContent = myRoles.map(r => ROLE_AR[r] || r).join('، ');
+    $('#rv-assign').hidden = !myRoles.some(r => r === 'Admin' || r === 'BankManager');
   } catch { /* handled by banner */ }
 }
 
@@ -566,7 +569,8 @@ let rv = { filter: 'NeedsReview', items: [], total: 0, index: 0, counts: {} };
 async function loadReview(reset) {
   if (reset) { rv.items = []; rv.index = 0; }
   let page;
-  try { page = await api('GET', `/api/review?status=${rv.filter}&skip=${rv.items.length}&take=100`); } catch { return; }
+  const mine = $('#rv-mine').checked ? '&mine=true' : '';
+  try { page = await api('GET', `/api/review?status=${rv.filter}&skip=${rv.items.length}&take=100${mine}`); } catch { return; }
   rv.items = rv.items.concat(page.items);
   rv.total = page.total;
   rv.counts = page.counts;
@@ -609,6 +613,33 @@ function renderReview() {
   renderDetail(rv.items[rv.index]);
 }
 $('#rv-more').onclick = () => loadReview(false);
+$('#rv-mine').onchange = () => loadReview(true);
+
+async function loadAssignments() {
+  let list;
+  try { list = await api('GET', '/api/review/assignments'); } catch { return; }
+  const box = $('#as-progress');
+  box.replaceChildren();
+  if (!list.length) { box.append(el('span', { className: 'muted', textContent: 'لم يُسند شيء بعد.' })); return; }
+  for (const p of list) {
+    const un = el('button', { className: 'btn sm', type: 'button', textContent: 'إلغاء إسناد المفتوح' });
+    un.onclick = async () => {
+      try { const r = await api('POST', '/api/review/assignments/unassign', { reviewer: p.reviewer }); toast(`أُلغي إسناد ${fmt(r.unassigned)} سؤال.`); loadAssignments(); }
+      catch (e) { toast(e.message); }
+    };
+    box.append(el('bdi', { textContent: p.reviewer }), el('span', { textContent: `${fmt(p.assigned)} مسند` }),
+      el('span', { textContent: `${fmt(p.open)} مفتوح` }), el('span', { className: 'muted', textContent: `${fmt(p.approved)} معتمد · ${fmt(p.flagged)} للجنة` }), un);
+  }
+}
+
+$('#rv-assign-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    const r = await api('POST', '/api/review/assignments', { reviewer: $('#as-reviewer').value, folder: $('#as-folder').value || null, count: Number($('#as-count').value) });
+    toast(r.assigned ? `أُسند ${fmt(r.assigned)} سؤال.` : 'لا توجد أسئلة غير مسندة تطابق الطلب.');
+    loadAssignments();
+  } catch (err) { toast(err.message); }
+});
 
 function renderDetail(q) {
   const box = $('#rv-detail');

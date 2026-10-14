@@ -20,6 +20,8 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
     public DbSet<AuditEntry> AuditLog => Set<AuditEntry>();
     public DbSet<ExportRecord> Exports => Set<ExportRecord>();
     public DbSet<QuestionBand> QuestionBands => Set<QuestionBand>();
+    public DbSet<ImageBlob> ImageBlobs => Set<ImageBlob>();
+    public DbSet<QuestionImage> QuestionImages => Set<QuestionImage>();
     public DbSet<ColumnTemplate> ColumnTemplates => Set<ColumnTemplate>();
     public DbSet<CompetencyFramework> Frameworks => Set<CompetencyFramework>();
     public DbSet<CompetencyIndicator> Indicators => Set<CompetencyIndicator>();
@@ -133,6 +135,22 @@ public sealed class QuestionBankDbContext(DbContextOptions<QuestionBankDbContext
             e.HasIndex(x => new { x.Band, x.Key });
             e.HasIndex(x => x.QuestionId);
             e.HasOne<Question>().WithMany().HasForeignKey(x => x.QuestionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ImageBlob>(e =>
+        {
+            e.HasKey(x => x.Sha256);
+            e.Property(x => x.Sha256).HasMaxLength(64);
+            e.Property(x => x.ContentType).HasMaxLength(64).IsRequired();
+        });
+
+        modelBuilder.Entity<QuestionImage>(e =>
+        {
+            e.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.QuestionId);
+            e.HasIndex(x => x.Sha256);
+            e.HasOne<Question>().WithMany().HasForeignKey(x => x.QuestionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ImageBlob>().WithMany().HasForeignKey(x => x.Sha256).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<WorkerCommand>(e =>

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -217,6 +218,36 @@ public sealed class SecurityTests : IDisposable
     }
 
     /// <summary>مستخدم اختبار مجموعاته من ترويسة الطلب. بدون ترويسة = زائر غير مصادَق.</summary>
+    [Fact]
+    public async Task Images_ServeOnlyBrowserSafeTypes_ToReviewers()
+    {
+        var client = Client(testAuth: true);
+        var png = new string('A', 64);
+        var emf = new string('B', 64);
+        var options = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<QuestionBank.Core.Data.QuestionBankDbContext>()
+            .UseSqlite($"Data Source={Path.Combine(_dir, "web.db")};Pooling=False").Options;
+        await using (var db = new QuestionBank.Core.Data.QuestionBankDbContext(options))
+        {
+            db.ImageBlobs.Add(new QuestionBank.Core.Extraction.ImageBlob { Sha256 = png, ContentType = "image/png", SizeBytes = 3, Content = [1, 2, 3] });
+            db.ImageBlobs.Add(new QuestionBank.Core.Extraction.ImageBlob { Sha256 = emf, ContentType = "image/x-emf", SizeBytes = 3, Content = [4, 5, 6] });
+            await db.SaveChangesAsync();
+        }
+
+        client.DefaultRequestHeaders.Add(TestAuthHandler.GroupsHeader, "CORP\\QB-Reviewers");
+        var ok = await client.GetAsync("/api/images/" + png.ToLowerInvariant());
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Equal("image/png", ok.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("nosniff", ok.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal([1, 2, 3], await ok.Content.ReadAsByteArrayAsync());
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/images/" + emf)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/images/..%2F..%2Fweb.db")).StatusCode);
+
+        using var asViewer = new HttpRequestMessage(HttpMethod.Get, "/api/images/" + png);
+        client.DefaultRequestHeaders.Remove(TestAuthHandler.GroupsHeader);
+        asViewer.Headers.Add(TestAuthHandler.GroupsHeader, "CORP\\QB-Viewers");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(asViewer)).StatusCode);
+    }
+
     private sealed class TestAuthHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)

@@ -113,6 +113,7 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
         await db.SaveChangesAsync(cancellationToken);
         foreach (var entity in added)
             AddBands(db, entity);
+        var addedImages = await AddImagesAsync(result.Questions, added, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
         // نفصل الأسئلة فقط حتى لا تكبر الذاكرة؛ كيانات المستدعي (الملف، الطلب) تبقى متتبَّعة.
@@ -120,9 +121,51 @@ public sealed class ExtractionService(QuestionBankDbContext db, ReaderRegistry r
             db.Entry(entity).State = EntityState.Detached;
         foreach (var band in db.ChangeTracker.Entries<Quality.QuestionBand>().ToList())
             band.State = EntityState.Detached;
+        foreach (var entry in addedImages)
+            db.Entry(entry).State = EntityState.Detached;
 
         var needsMapping = result.Questions.Count == 0 && result.Warnings.Any(w => w.Contains(XlsxReader.NeedsMappingMarker));
         return new ExtractionOutcome(true, result.Questions.Count, result.Warnings.Count, null, needsMapping);
+    }
+
+    /// <summary>
+    /// يحفظ صور الأسئلة: المحتوى مرة واحدة لكل بصمة، ثم ربط كل صورة بسؤالها وموضعها.
+    /// يعيد الكيانات المضافة ليفصلها المستدعي بعد الحفظ.
+    /// </summary>
+    private async Task<List<object>> AddImagesAsync(IReadOnlyList<ExtractedQuestion> questions, List<Question> added, CancellationToken cancellationToken)
+    {
+        var tracked = new List<object>();
+        var withImages = questions.Select((q, i) => (q, Entity: added[i])).Where(x => x.q.Images is { Count: > 0 }).ToList();
+        if (withImages.Count == 0)
+            return tracked;
+
+        var hashes = withImages.SelectMany(x => x.q.Images!).Select(m => (Image: m, Sha: Convert.ToHexString(SHA256.HashData(m.Content)))).ToList();
+        var wanted = hashes.Select(h => h.Sha).Distinct().ToList();
+        var known = (await db.ImageBlobs.Where(b => wanted.Contains(b.Sha256)).Select(b => b.Sha256).ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var (image, sha) in hashes)
+        {
+            if (!known.Add(sha))
+                continue;
+            var blob = new ImageBlob { Sha256 = sha, ContentType = image.ContentType, SizeBytes = image.Content.Length, Content = image.Content };
+            db.ImageBlobs.Add(blob);
+            tracked.Add(blob);
+        }
+        foreach (var (q, entity) in withImages)
+        {
+            var order = 0;
+            foreach (var image in q.Images!)
+            {
+                var link = new QuestionImage
+                {
+                    QuestionId = entity.Id, OptionIndex = image.OptionIndex, Order = order++,
+                    Sha256 = Convert.ToHexString(SHA256.HashData(image.Content))
+                };
+                db.QuestionImages.Add(link);
+                tracked.Add(link);
+            }
+        }
+        return tracked;
     }
 
     /// <summary>

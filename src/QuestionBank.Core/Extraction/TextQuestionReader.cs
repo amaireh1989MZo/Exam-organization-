@@ -13,8 +13,15 @@ public enum FormatMarks
     Highlight = 8
 }
 
-/// <summary>سطر من المصدر بعد استخراجه: نصه، وموقعه للعرض، وتنسيقه إن وُجد.</summary>
-public sealed record SourceLine(string Text, string Location, FormatMarks Marks = FormatMarks.None);
+/// <summary>
+/// سطر من المصدر بعد استخراجه: نصه، وموقعه للعرض، وتنسيقه إن وُجد، وصوره (Word)،
+/// وهل فيه معادلة Word لم تُقرأ نصًا.
+/// </summary>
+public sealed record SourceLine(string Text, string Location, FormatMarks Marks = FormatMarks.None,
+    IReadOnlyList<ExtractedImage>? Images = null, bool HasMath = false, IReadOnlyList<string>? Notes = null)
+{
+    public bool HasImages => Images is { Count: > 0 };
+}
 
 /// <summary>
 /// محلل الأسطر المشترك بين TXT وWord. يكشف الإجابة الصحيحة بطرق مستقلة ويقارن بينها:
@@ -31,6 +38,22 @@ public static partial class LineQuestionParser
         public readonly List<string> Stem = [];
         public readonly List<(string Label, string Text, bool Marked, FormatMarks Format)> Options = [];
         public string? AnswerLineLabel;
+        public readonly List<ExtractedImage> Images = [];
+        public bool ImageAfterOptions;
+        public bool HasMath;
+        public readonly List<string> Notes = [];
+
+        /// <summary>صور السطر تتبع نص السؤال قبل الخيارات، أو الخيار الأخير بعدها.</summary>
+        public void Attach(SourceLine line, int? option)
+        {
+            HasMath |= line.HasMath;
+            if (line.Notes is not null)
+                Notes.AddRange(line.Notes.Where(n => !Notes.Contains(n)));
+            if (!line.HasImages)
+                return;
+            foreach (var img in line.Images!)
+                Images.Add(img with { OptionIndex = option });
+        }
     }
 
     public static (List<ExtractedQuestion> Questions, List<string> Warnings) Parse(IEnumerable<SourceLine> lines)
@@ -45,7 +68,16 @@ public static partial class LineQuestionParser
         {
             var raw = line.Text.Trim().TrimStart('\uFEFF');
             if (raw.Length == 0)
+            {
+                // فقرة صورة فقط: تتبع نص السؤال، أو الخيار الأخير إن جاءت بعد الخيارات (موضع غير مؤكد).
+                if ((line.HasImages || line.HasMath || line.Notes is { Count: > 0 }) && current is not null && !inKey)
+                {
+                    var option = current.Options.Count == 0 ? (int?)null : current.Options.Count - 1;
+                    current.ImageAfterOptions |= option is not null && line.HasImages;
+                    current.Attach(line, option);
+                }
                 continue;
+            }
             // الأرقام تُوحَّد للمطابقة فقط؛ الطول لا يتغير فتبقى مواضع النص الأصلي صحيحة.
             var norm = TextDecoding.NormalizeDigits(raw);
 
@@ -67,6 +99,7 @@ public static partial class LineQuestionParser
             {
                 current = new Block { Number = q.Groups["n"].Value, Location = line.Location };
                 current.Stem.Add(raw[q.Groups["t"].Index..].Trim());
+                current.Attach(line, null);
                 blocks.Add(current);
                 continue;
             }
@@ -86,16 +119,32 @@ public static partial class LineQuestionParser
                 var marked = o.Groups["m1"].Success || o.Groups["m2"].Success;
                 var optionText = raw.Substring(o.Groups["t"].Index, o.Groups["t"].Length).Trim();
                 current.Options.Add((NormalizeLabel(o.Groups["l"].Value), optionText, marked, line.Marks));
+                current.Attach(line, current.Options.Count - 1);
+                continue;
+            }
+
+            // خيار صورته هي نصه: "أ)" ثم صورة فقط.
+            var imageOption = line.HasImages ? ImageOnlyOption().Match(norm) : Match.Empty;
+            if (imageOption.Success)
+            {
+                var marked = imageOption.Groups["m1"].Success || imageOption.Groups["m2"].Success;
+                current.Options.Add((NormalizeLabel(imageOption.Groups["l"].Value), "", marked, line.Marks));
+                current.Attach(line, current.Options.Count - 1);
                 continue;
             }
 
             // سطر تكملة: للنص قبل الخيارات، أو لآخر خيار بعدها.
             if (current.Options.Count == 0)
+            {
                 current.Stem.Add(raw);
+                current.Attach(line, null);
+            }
             else
             {
                 var last = current.Options[^1];
-                current.Options[^1] = (last.Label, last.Text + " " + raw, last.Marked, last.Format);
+                current.Options[^1] = (last.Label, (last.Text + " " + raw).Trim(), last.Marked, last.Format);
+                current.ImageAfterOptions |= line.HasImages;
+                current.Attach(line, current.Options.Count - 1);
             }
         }
 
@@ -187,14 +236,44 @@ public static partial class LineQuestionParser
             issues.Add("أقل من خيارين");
             confidence = ExtractionConfidence.Low;
         }
-        if (options.Count != options.Distinct().Count())
+        // خيار بلا نص مقبول إذا كانت صورته هي محتواه. التكرار يُقارن النص مع بصمات الصور.
+        var images = block.Images;
+        var identities = options.Select((o, i) => o + "|" + string.Join(",", images.Where(m => m.OptionIndex == i)
+            .Select(m => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(m.Content))))).ToList();
+        if (options.Where((o, i) => o.Length == 0 && !images.Any(m => m.OptionIndex == i)).Any())
+        {
+            issues.Add("خيار فارغ");
+            confidence = ExtractionConfidence.Low;
+        }
+        if (images.Count > 0)
+        {
+            // السؤال المصوّر يُراجع بشريًا دائمًا: يجب التأكد أن كل صورة في مكانها.
+            issues.Add($"سؤال مصوّر ({images.Count} صورة): تحقق من موضع الصور");
+            if (block.ImageAfterOptions)
+                issues.Add("صورة بعد الخيارات نُسبت إلى الخيار الأخير");
+            if (images.Any(m => !ExtractedImage.IsDisplayable(m.ContentType)))
+                issues.Add("صورة بصيغة لا يعرضها المتصفح ولا Moodle (مثل EMF أو WMF): تحتاج تحويلًا");
+            if (confidence == ExtractionConfidence.High) confidence = ExtractionConfidence.Medium;
+        }
+        foreach (var note in block.Notes)
+        {
+            issues.Add(note);
+            confidence = ExtractionConfidence.Low;
+        }
+        if (block.HasMath)
+        {
+            issues.Add("يحتوي معادلة Word لم تُقرأ نصًا: قارن بالملف الأصلي");
+            if (confidence == ExtractionConfidence.High) confidence = ExtractionConfidence.Medium;
+        }
+        if (identities.Count != identities.Distinct().Count())
         {
             issues.Add("خيارات مكررة");
             if (confidence == ExtractionConfidence.High) confidence = ExtractionConfidence.Medium;
         }
 
         return new ExtractedQuestion(order, null, string.Join("\n", block.Stem).Trim(), options, correct,
-            detectorName, confidence, $"سؤال {block.Number} · {block.Location}", issues);
+            detectorName, confidence, $"سؤال {block.Number} · {block.Location}", issues,
+            images.Count == 0 ? null : images.ToList());
     }
 
     /// <summary>يوحّد الحروف المتكافئة: "ا" = "أ"، و"ه" = "هـ"، واللاتينية بأحرف صغيرة.</summary>
@@ -212,6 +291,9 @@ public static partial class LineQuestionParser
 
     [GeneratedRegex(@"^(?<m1>[*✓✔]\s*)?\(?(?<l>" + Letters + @")\s*[).\-:]\s*(?<t>.+?)\s*(?<m2>[*✓✔]|\((?:صح|صحيح)\))?$")]
     private static partial Regex OptionLine();
+
+    [GeneratedRegex(@"^(?<m1>[*✓✔]\s*)?\(?(?<l>" + Letters + @")\s*[).\-:]\s*(?<m2>[*✓✔]|\((?:صح|صحيح)\))?$")]
+    private static partial Regex ImageOnlyOption();
 
     [GeneratedRegex(@"^(?:الإجابة الصحيحة|الاجابة الصحيحة|الإجابة|الاجابة|الجواب|Answer)\s*[:\-]\s*\(?(?<l>" + Letters + @")\)?\s*\.?$", RegexOptions.IgnoreCase)]
     private static partial Regex AnswerLine();

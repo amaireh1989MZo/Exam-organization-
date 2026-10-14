@@ -48,7 +48,16 @@ public sealed class ExportService(
     public const int MaxQuestionsPerExport = 5000;
 
     private sealed record Row(long Id, string StableKey, string? Code, string Text, string[] Options, int? Answer,
-        QuestionReviewStatus Status, string Source, string Location, string? IndicatorCategory = null, string? IndicatorCode = null);
+        QuestionReviewStatus Status, string Source, string Location, string? IndicatorCategory = null, string? IndicatorCode = null)
+    {
+        public IReadOnlyList<RowImage> Images { get; init; } = [];
+    }
+
+    private sealed record RowImage(int? OptionIndex, string Sha256, string ContentType, byte[] Content)
+    {
+        /// <summary>اسم الملف داخل Moodle: جزء من البصمة يكفي للتمييز داخل السؤال الواحد.</summary>
+        public string FileName => Sha256[..16].ToLowerInvariant() + "." + ExtractedImage.Extension(ContentType);
+    }
 
     public async Task<ExportResult> ExportAsync(ExportRequest request, string user, CancellationToken cancellationToken)
     {
@@ -78,6 +87,14 @@ public sealed class ExportService(
             .ToListAsync(cancellationToken);
 
         var byId = raw.ToDictionary(r => r.Id);
+        var imageRows = await (from qi in db.QuestionImages.AsNoTracking()
+                               join b in db.ImageBlobs.AsNoTracking() on qi.Sha256 equals b.Sha256
+                               where ids.Contains(qi.QuestionId)
+                               orderby qi.QuestionId, qi.Order
+                               select new { qi.QuestionId, qi.OptionIndex, b.Sha256, b.ContentType, b.Content })
+            .ToListAsync(cancellationToken);
+        var imagesById = imageRows.GroupBy(i => i.QuestionId)
+            .ToDictionary(g => g.Key, g => g.Select(i => new RowImage(i.OptionIndex, i.Sha256, i.ContentType, i.Content)).ToList());
         var rejected = new List<ExportRejection>();
         var rows = new List<Row>();
         foreach (var id in ids) // ترتيب السلة كما اختاره المستخدم
@@ -87,14 +104,22 @@ public sealed class ExportService(
             var answer = r.CorrectedIndex ?? r.OriginalCorrectIndex;
             if (r.ReviewStatus != QuestionReviewStatus.Approved) { rejected.Add(new(id, "غير معتمد")); continue; }
             if (answer is null || answer < 0 || answer >= options.Length) { rejected.Add(new(id, "بلا إجابة صحيحة")); continue; }
-            if (options.Length < 2 || options.Any(string.IsNullOrWhiteSpace) || string.IsNullOrWhiteSpace(r.OriginalText))
+            var images = imagesById.GetValueOrDefault(id) ?? [];
+            if (images.Count > 0 && request.Format == ExportFormat.Gift)
+            { rejected.Add(new(id, "سؤال مصوّر: صيغة GIFT لا تحمل الصور، صدّره بصيغة Moodle XML")); continue; }
+            if (images.Any(m => !ExtractedImage.IsDisplayable(m.ContentType)))
+            { rejected.Add(new(id, "صورة بصيغة لا يعرضها Moodle (مثل EMF أو WMF): تحتاج تحويلًا")); continue; }
+            // الخيار أو النص بلا كتابة مقبول إذا كانت صورته هي محتواه.
+            if (options.Length < 2
+                || options.Where((o, i) => string.IsNullOrWhiteSpace(o) && !images.Any(m => m.OptionIndex == i)).Any()
+                || (string.IsNullOrWhiteSpace(r.OriginalText) && !images.Any(m => m.OptionIndex is null)))
             { rejected.Add(new(id, "بنية ناقصة")); continue; }
             // فئة Moodle حسب المؤشر: الإطار وإصداره، ثم المجال، ثم الفرعي، ثم المؤشر (الرمز إن وُجد).
             var category = r.Indicator is { } ind
                 ? string.Join("/", new[] { ind.F, ind.MainDomain, ind.SubDomain, ind.Code ?? ind.Name }.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Replace('/', '∕')))
                 : null;
             rows.Add(new Row(r.Id, r.StableKey, r.OriginalCode, r.OriginalText, options, answer, r.ReviewStatus,
-                r.File ?? ("رفع يدوي/" + r.Upload), r.Location, category, r.Indicator?.Code));
+                r.File ?? ("رفع يدوي/" + r.Upload), r.Location, category, r.Indicator?.Code) { Images = images });
         }
         if (rows.Count == 0)
             return new ExportResult(null, null, 0, rejected, "NothingToExport");
@@ -220,7 +245,9 @@ public sealed class ExportService(
             quiz.Add(new XComment($" {r.StableKey} | مصدر: {OneLine(r.Source)} | {OneLine(r.Location)} ".Replace("--", "- -")));
             quiz.Add(new XElement("question", new XAttribute("type", "multichoice"),
                 new XElement("name", new XElement("text", r.Code ?? r.StableKey)),
-                new XElement("questiontext", new XAttribute("format", "html"), new XElement("text", new XCData(Rtl(r.Text)))),
+                new XElement("questiontext", new XAttribute("format", "html"),
+                    new XElement("text", new XCData(Html(r.Text, r.Images.Where(m => m.OptionIndex is null)))),
+                    Files(r.Images.Where(m => m.OptionIndex is null))),
                 new XElement("generalfeedback", new XAttribute("format", "html"), new XElement("text", "")),
                 new XElement("defaultgrade", "1.0000000"),
                 new XElement("penalty", "0.3333333"),
@@ -231,7 +258,8 @@ public sealed class ExportService(
                 new XElement("answernumbering", "none"),
                 r.Options.Select((o, i) => new XElement("answer",
                     new XAttribute("fraction", i == r.Answer ? "100" : "0"), new XAttribute("format", "html"),
-                    new XElement("text", new XCData(Rtl(o))),
+                    new XElement("text", new XCData(Html(o, r.Images.Where(m => m.OptionIndex == i)))),
+                    Files(r.Images.Where(m => m.OptionIndex == i)),
                     new XElement("feedback", new XAttribute("format", "html"), new XElement("text", "")))),
                 new XElement("tags",
                     new XElement("tag", new XElement("text", "source:" + Folder(r.Source))),
@@ -247,6 +275,22 @@ public sealed class ExportService(
     private static string Rtl(string text) =>
         "<p dir=\"rtl\">" + SecurityElement.Escape(text)!.Replace("\n", "<br>") + "</p>";
 
+    /// <summary>النص ثم صوره بالترتيب. الصورة تشير إلى ملف مضمّن في السؤال نفسه (@@PLUGINFILE@@).</summary>
+    private static string Html(string text, IEnumerable<RowImage> images)
+    {
+        var sb = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(text))
+            sb.Append(Rtl(text));
+        foreach (var name in images.Select(m => m.FileName).Distinct())
+            sb.Append("<p><img src=\"@@PLUGINFILE@@/").Append(name).Append("\" alt=\"\"></p>");
+        return sb.ToString();
+    }
+
+    private static IEnumerable<XElement> Files(IEnumerable<RowImage> images) =>
+        images.DistinctBy(m => m.FileName).Select(m => new XElement("file",
+            new XAttribute("name", m.FileName), new XAttribute("path", "/"), new XAttribute("encoding", "base64"),
+            Convert.ToBase64String(m.Content)));
+
     private static string Folder(string source)
     {
         var slash = source.LastIndexOf('/');
@@ -256,6 +300,10 @@ public sealed class ExportService(
     private static string OneLine(string s) => s.Replace('\r', ' ').Replace('\n', ' ');
 
     // ---------- self-check ----------
+
+    private static int DistinctImages(Row r) =>
+        r.Images.Where(m => m.OptionIndex is null).DistinctBy(m => m.FileName).Count()
+        + Enumerable.Range(0, r.Options.Length).Sum(i => r.Images.Where(m => m.OptionIndex == i).DistinctBy(m => m.FileName).Count());
 
     private static bool Verify(ExportFormat format, string content, IReadOnlyList<Row> rows)
     {
@@ -278,10 +326,34 @@ public sealed class ExportService(
         {
             var doc = XDocument.Parse(content);
             var questions = doc.Root!.Elements("question").Where(q => (string?)q.Attribute("type") == "multichoice").ToList();
-            return questions.Count == rows.Count
-                && questions.All(q => q.Elements("answer").Count(a => (string?)a.Attribute("fraction") == "100") == 1);
+            if (questions.Count != rows.Count
+                || !questions.All(q => q.Elements("answer").Count(a => (string?)a.Attribute("fraction") == "100") == 1))
+                return false;
+            // كل صورة يجب أن تصل كما هي: الملف المضمّن يطابق بصمته، وكل ملف له إشارة في النص.
+            var byKey = rows.ToDictionary(r => r.StableKey);
+            foreach (var q in questions)
+            {
+                if (!byKey.TryGetValue((string?)q.Element("idnumber") ?? "", out var row))
+                    return false;
+                var parts = new[] { q.Element("questiontext")! }.Concat(q.Elements("answer")).ToList();
+                var files = parts.SelectMany(p => p.Elements("file")).ToList();
+                if (files.Count != DistinctImages(row))
+                    return false;
+                foreach (var part in parts)
+                {
+                    var html = (string?)part.Element("text") ?? "";
+                    foreach (var f in part.Elements("file"))
+                    {
+                        var name = (string?)f.Attribute("name") ?? "";
+                        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Convert.FromBase64String(f.Value)));
+                        if (!name.StartsWith(sha[..16], StringComparison.OrdinalIgnoreCase) || !html.Contains("@@PLUGINFILE@@/" + name, StringComparison.Ordinal))
+                            return false;
+                    }
+                }
+            }
+            return true;
         }
-        catch (System.Xml.XmlException)
+        catch (Exception ex) when (ex is System.Xml.XmlException or FormatException)
         {
             return false;
         }

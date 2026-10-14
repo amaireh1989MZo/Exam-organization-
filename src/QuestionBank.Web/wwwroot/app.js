@@ -355,10 +355,11 @@ async function showQuestions(u) {
   const CONF_AR = { High: 'ثقة عالية', Medium: 'ثقة متوسطة', Low: 'تحتاج تدخلًا' };
   for (const q of questions) {
     const ol = el('ol');
-    q.options.forEach((o, i) => ol.append(el('li', { className: i === q.correctIndex ? 'correct' : '', textContent: o })));
+    q.options.forEach((o, i) => ol.append(el('li', { className: i === q.correctIndex ? 'correct' : '' }, o, qImages(q, i))));
     const dot = el('span', { className: 'dot ' + q.confidence, title: CONF_AR[q.confidence] });
     body.append(el('div', { className: 'q' },
       el('div', { className: 'qh' }, el('span', { className: 'qt', textContent: `${fmt(q.order)}. ${q.text}` }), dot),
+      qImages(q, null),
       ol,
       q.issues.length ? el('div', { className: 'issues', textContent: q.issues.join(' · ') }) : '',
       el('div', { className: 'loc', textContent: `${q.location}${q.code ? ' · ' + q.code : ''} · ${CONF_AR[q.confidence]}` })));
@@ -641,6 +642,18 @@ $('#rv-assign-form').addEventListener('submit', async e => {
   } catch (err) { toast(err.message); }
 });
 
+/* صور السؤال: slot = null لنص السؤال، أو رقم الخيار. الصيغ التي لا يعرضها المتصفح تظهر كتنبيه. */
+function qImages(q, slot) {
+  const list = (q.images || []).filter(m => m.optionIndex === slot);
+  const box = el('span', { className: 'qimgs' });
+  for (const m of list) {
+    box.append(m.displayable
+      ? el('img', { className: 'qimg', src: '/api/images/' + m.sha256, alt: slot === null ? 'صورة السؤال' : 'صورة الخيار', loading: 'lazy' })
+      : el('span', { className: 'chip warn', textContent: `صورة ${m.contentType.replace('image/', '').toUpperCase()} لا تُعرض` }));
+  }
+  return list.length ? box : '';
+}
+
 function renderDetail(q) {
   const box = $('#rv-detail');
   box.replaceChildren();
@@ -652,11 +665,12 @@ function renderDetail(q) {
     el('span', { className: 'mono muted', textContent: q.code || ('#' + q.id) }),
     el('span', { className: 'chip ' + (q.reviewStatus === 'Approved' ? 'ok' : q.reviewStatus === 'Flagged' ? 'warn' : 'wait'), textContent: RV_STATUS_AR[q.reviewStatus] || q.reviewStatus })));
   box.append(el('h2', { textContent: q.text, style: 'white-space:pre-wrap;font-size:18px' }));
+  box.append(qImages(q, null));
 
   const opts = el('div', { className: 'opts' });
   q.options.forEach((o, i) => {
     const b = el('button', { className: 'opt' + (i === q.effectiveCorrectIndex ? ' correct' : ''), type: 'button', disabled: locked },
-      el('span', { className: 'L', textContent: LETTERS[i] || String(i + 1) }), el('span', { textContent: o }));
+      el('span', { className: 'L', textContent: LETTERS[i] || String(i + 1) }), el('span', { textContent: o }), qImages(q, i));
     if (q.correctedIndex !== null && i === q.originalCorrectIndex) b.append(el('span', { className: 'orig', textContent: 'الإجابة في الملف' }));
     b.onclick = () => setAnswer(q, i);
     opts.append(b);

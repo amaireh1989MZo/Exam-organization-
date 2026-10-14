@@ -256,6 +256,7 @@ app.MapGet("/api/questions", async (long? uploadId, long? sourceFileId, Question
         .OrderBy(q => q.OriginalOrder)
         .Take(1000)
         .ToListAsync(ct);
+    var images = await QuestionImageQueries.RefsAsync(db, rows.Select(q => q.Id).ToList(), ct);
     return Results.Ok(rows.Select(q => new
     {
         q.Id,
@@ -269,8 +270,20 @@ app.MapGet("/api/questions", async (long? uploadId, long? sourceFileId, Question
         confidence = q.Confidence.ToString(),
         location = q.Location,
         issues = q.IssuesJson is null ? [] : System.Text.Json.JsonSerializer.Deserialize<string[]>(q.IssuesJson),
-        reviewStatus = q.ReviewStatus.ToString()
+        reviewStatus = q.ReviewStatus.ToString(),
+        images = images.GetValueOrDefault(q.Id)
     }));
+}).RequireAuthorization(AppPolicies.Review);
+
+// صور الأسئلة بالبصمة. تُعرض فقط الصيغ الآمنة التي يعرضها المتصفح (لا SVG ولا HTML)، مع nosniff من الترويسات العامة.
+app.MapGet("/api/images/{sha}", async (string sha, QuestionBankDbContext db, CancellationToken ct) =>
+{
+    if (sha.Length != 64 || !sha.All(Uri.IsHexDigit))
+        return Results.NotFound();
+    var blob = await db.ImageBlobs.AsNoTracking().FirstOrDefaultAsync(b => b.Sha256 == sha.ToUpperInvariant(), ct);
+    if (blob is null || !ExtractedImage.IsDisplayable(blob.ContentType))
+        return Results.NotFound();
+    return Results.File(blob.Content, blob.ContentType, entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue($"\"{blob.Sha256}\""));
 }).RequireAuthorization(AppPolicies.Review);
 
 var review = app.MapGroup("/api/review").RequireAuthorization(AppPolicies.Review);

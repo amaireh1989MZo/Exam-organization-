@@ -109,6 +109,29 @@ namespace QuestionBank.Core.Data.Migrations
                     b.ToTable("ColumnTemplates");
                 });
 
+            modelBuilder.Entity("QuestionBank.Core.Extraction.ImageBlob", b =>
+                {
+                    b.Property<string>("Sha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Sha256");
+
+                    b.ToTable("ImageBlobs");
+                });
+
             modelBuilder.Entity("QuestionBank.Core.Extraction.Question", b =>
                 {
                     b.Property<long>("Id")
@@ -263,6 +286,35 @@ namespace QuestionBank.Core.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_Questions_OneSource", "(SourceFileId IS NULL) <> (UploadId IS NULL)");
                         });
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Extraction.QuestionImage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("OptionIndex")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("QuestionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QuestionId");
+
+                    b.HasIndex("Sha256");
+
+                    b.ToTable("QuestionImages");
                 });
 
             modelBuilder.Entity("QuestionBank.Core.Extraction.Upload", b =>
@@ -753,6 +805,21 @@ namespace QuestionBank.Core.Data.Migrations
                         .WithMany()
                         .HasForeignKey("UploadId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("QuestionBank.Core.Extraction.QuestionImage", b =>
+                {
+                    b.HasOne("QuestionBank.Core.Extraction.Question", null)
+                        .WithMany()
+                        .HasForeignKey("QuestionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("QuestionBank.Core.Extraction.ImageBlob", null)
+                        .WithMany()
+                        .HasForeignKey("Sha256")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("QuestionBank.Core.Frameworks.CompetencyIndicator", b =>

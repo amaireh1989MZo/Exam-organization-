@@ -25,6 +25,32 @@ public static class AnswerDetectors
 }
 
 /// <summary>
+/// صورة من الملف كما هي (بلا تحويل). OptionIndex = null للصورة في نص السؤال، أو رقم الخيار الذي تتبعه.
+/// </summary>
+public sealed record ExtractedImage(byte[] Content, string ContentType, int? OptionIndex = null)
+{
+    /// <summary>الصيغ التي يعرضها المتصفح وMoodle مباشرة. غيرها (EMF وWMF وTIFF) يُحفظ لكنه يحتاج تحويلًا.</summary>
+    public static bool IsDisplayable(string contentType) =>
+        contentType is "image/png" or "image/jpeg" or "image/gif" or "image/bmp" or "image/webp";
+
+    /// <summary>الحد الأعلى لحجم الصورة الواحدة. الأكبر لا يُحفظ ويُحال السؤال للمراجع.</summary>
+    public const int MaxBytes = 5 * 1024 * 1024;
+
+    public static string Extension(string contentType) => contentType switch
+    {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/webp" => "webp",
+        "image/x-emf" or "image/emf" => "emf",
+        "image/x-wmf" or "image/wmf" => "wmf",
+        "image/tiff" => "tif",
+        _ => "bin"
+    };
+}
+
+/// <summary>
 /// سؤال كما ورد في الملف. النص والخيارات وترتيبها محفوظة كما هي (بعد إزالة رموز الترقيم والعلامات فقط)،
 /// ولا يُعاد صياغة أي شيء.
 /// </summary>
@@ -37,7 +63,8 @@ public sealed record ExtractedQuestion(
     string Detector,
     ExtractionConfidence Confidence,
     string Location,
-    IReadOnlyList<string> Issues);
+    IReadOnlyList<string> Issues,
+    IReadOnlyList<ExtractedImage>? Images = null);
 
 public sealed record ReaderResult(string ReaderName, string ReaderVersion, IReadOnlyList<ExtractedQuestion> Questions, IReadOnlyList<string> Warnings);
 

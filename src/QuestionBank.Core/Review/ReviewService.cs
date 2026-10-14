@@ -47,7 +47,8 @@ public sealed record ReviewItem(
     int? OriginalCorrectIndex, int? CorrectedIndex, int? EffectiveCorrectIndex,
     string Detector, string Confidence, string Location, IReadOnlyList<string> Issues,
     string ReviewStatus, string Source, string? ReviewedBy, DateTime? ReviewedAtUtc,
-    bool TextCorrected = false, string? OriginalText = null, IReadOnlyList<string>? OriginalOptions = null);
+    bool TextCorrected = false, string? OriginalText = null, IReadOnlyList<string>? OriginalOptions = null,
+    IReadOnlyList<ImageRef>? Images = null);
 
 public sealed record ReviewPage(IReadOnlyDictionary<string, int> Counts, int Total, IReadOnlyList<ReviewItem> Items);
 
@@ -88,7 +89,11 @@ public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
             })
             .ToListAsync(cancellationToken);
 
-        return new ReviewPage(counts, total, rows.Select(r => ToItem(r.Q, r.File ?? ("رفع يدوي: " + r.Upload))).ToList());
+        var images = await QuestionImageQueries.RefsAsync(db, rows.Select(r => r.Q.Id).ToList(), cancellationToken);
+        return new ReviewPage(counts, total, rows.Select(r => ToItem(r.Q, r.File ?? ("رفع يدوي: " + r.Upload)) with
+        {
+            Images = images.GetValueOrDefault(r.Q.Id)
+        }).ToList());
     }
 
     /// <summary>يعيّن الإجابة الصحيحة كتصحيح. الإجابة الأصلية لا تتغير. null يلغي التصحيح ويعيد الأصل.</summary>
@@ -112,8 +117,13 @@ public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
     /// يصحح نص السؤال والخيارات كطبقة فوق الأصل. عدد الخيارات وترتيبها ثابتان (الإجابة مرتبطة بموقعها).
     /// تمرير null لكليهما يلغي التصحيح. السجل يذكر الحقول المعدّلة فقط وليس النص.
     /// </summary>
-    public Task<ReviewOutcome> SetTextAsync(long questionId, string? text, IReadOnlyList<string>? options, string user, CancellationToken cancellationToken) =>
-        MutateAsync(questionId, user, cancellationToken, q =>
+    public async Task<ReviewOutcome> SetTextAsync(long questionId, string? text, IReadOnlyList<string>? options, string user, CancellationToken cancellationToken)
+    {
+        // الموضع الذي فيه صورة يجوز أن يبقى بلا كتابة: الصورة هي محتواه.
+        var imageSlots = await db.QuestionImages.AsNoTracking().Where(i => i.QuestionId == questionId)
+            .Select(i => i.OptionIndex).Distinct().ToListAsync(cancellationToken);
+        bool MayBeEmpty(int? slot) => imageSlots.Contains(slot);
+        return await MutateAsync(questionId, user, cancellationToken, q =>
         {
             if (q.ReviewStatus is QuestionReviewStatus.Approved or QuestionReviewStatus.Superseded)
                 return (ReviewOutcome.NotAllowedInStatus, null, null, null);
@@ -129,8 +139,8 @@ public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
 
             var newText = (text ?? q.EffectiveText).Trim();
             var newOptions = (options ?? JsonSerializer.Deserialize<string[]>(q.EffectiveOptionsJson) ?? []).Select(o => (o ?? "").Trim()).ToArray();
-            if (newText.Length == 0 || newText.Length > 10_000 || newOptions.Length != original.Length
-                || newOptions.Any(o => o.Length == 0 || o.Length > 2_000))
+            if ((newText.Length == 0 && !MayBeEmpty(null)) || newText.Length > 10_000 || newOptions.Length != original.Length
+                || newOptions.Where((o, i) => (o.Length == 0 && !MayBeEmpty(i)) || o.Length > 2_000).Any())
                 return (ReviewOutcome.InvalidText, null, null, null);
 
             var changed = new List<string>();
@@ -141,6 +151,7 @@ public sealed class ReviewService(QuestionBankDbContext db, TimeProvider time)
             return (ReviewOutcome.Ok, changed.Count == 0 ? AuditActions.RevertText : AuditActions.SetText, null,
                 changed.Count == 0 ? "original" : string.Join(",", changed));
         });
+    }
 
     public Task<ReviewOutcome> ApproveAsync(long questionId, string user, CancellationToken cancellationToken) =>
         MutateAsync(questionId, user, cancellationToken, q =>

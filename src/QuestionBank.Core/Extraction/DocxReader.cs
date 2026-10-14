@@ -11,12 +11,13 @@ namespace QuestionBank.Core.Extraction;
 /// - الترقيم المكتوب في النص ("1." و"أ)") والترقيم التلقائي في Word (الرقم ليس جزءًا من النص) كلاهما مدعوم.
 /// - تنسيق الخيار (عريض، لون، تسطير، تظليل) يُسجَّل دليلًا على الإجابة إذا ميّز خيارًا واحدًا فقط.
 /// - النص المحذوف بتعقب التغييرات لا يُقرأ. الجداول تُقرأ صفًا صفًا كأسطر.
+/// - الصور المضمّنة تُستخرج كما هي وتُنسب إلى نص السؤال أو إلى خيارها. المعادلات تُعلَّم للمراجع ولا تُحوَّل نصًا.
 /// هذا قارئ عام مبني على أنماط Word الشائعة، ويحتاج معايرة على عينات المؤسسة.
 /// </summary>
 public sealed partial class DocxReader : IQuestionReader
 {
     public string Name => "docx";
-    public string Version => "0.9";
+    public string Version => "1.0";
     public bool CanRead(string extension) => extension == "docx";
 
     private static readonly string[] ArabicLetters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح"];
@@ -40,7 +41,8 @@ public sealed partial class DocxReader : IQuestionReader
             if (body is null)
                 return new ReaderResult(Name, Version, [], ["المستند فارغ."]);
 
-            var numbering = new NumberingResolver(doc.MainDocumentPart!.NumberingDefinitionsPart?.Numbering);
+            var main = doc.MainDocumentPart!;
+            var numbering = new NumberingResolver(main.NumberingDefinitionsPart?.Numbering);
             var lines = new List<SourceLine>();
             var state = new ListState();
             var paragraphNo = 0;
@@ -52,7 +54,7 @@ public sealed partial class DocxReader : IQuestionReader
                 {
                     case Paragraph p:
                         paragraphNo++;
-                        AddParagraph(p, $"فقرة {paragraphNo}", numbering, state, lines);
+                        AddParagraph(p, $"فقرة {paragraphNo}", main, numbering, state, lines);
                         break;
                     case Table t:
                         tableNo++;
@@ -61,7 +63,7 @@ public sealed partial class DocxReader : IQuestionReader
                         {
                             rowNo++;
                             foreach (var p in row.Descendants<Paragraph>())
-                                AddParagraph(p, $"جدول {tableNo} صف {rowNo}", numbering, state, lines);
+                                AddParagraph(p, $"جدول {tableNo} صف {rowNo}", main, numbering, state, lines);
                         }
                         break;
                 }
@@ -78,11 +80,14 @@ public sealed partial class DocxReader : IQuestionReader
         public int OptionIndex;
     }
 
-    private static void AddParagraph(Paragraph p, string location, NumberingResolver numbering, ListState state, List<SourceLine> lines)
+    private static void AddParagraph(Paragraph p, string location, MainDocumentPart main, NumberingResolver numbering, ListState state, List<SourceLine> lines)
     {
         var (text, marks) = TextAndMarks(p);
-        if (text.Trim().Length == 0)
+        var (images, notes) = ImagesOf(p, main);
+        var hasMath = p.Descendants<DocumentFormat.OpenXml.Math.OfficeMath>().Any();
+        if (text.Trim().Length == 0 && images.Count == 0 && notes.Count == 0 && !hasMath)
             return;
+        SourceLine Line(string t) => new(t, location, marks, images.Count == 0 ? null : images, hasMath, notes.Count == 0 ? null : notes);
 
         var numPr = p.ParagraphProperties?.NumberingProperties;
         var numId = numPr?.NumberingId?.Val?.Value;
@@ -101,21 +106,77 @@ public sealed partial class DocxReader : IQuestionReader
                 {
                     // ترقيم تلقائي للسؤال: نكتب الرقم كما يظهر للمستخدم في Word.
                     state.OptionIndex = 0;
-                    lines.Add(new SourceLine($"{counter}. {text}", location, marks));
+                    lines.Add(Line($"{counter}. {text}"));
                     return;
                 }
                 // ترقيم تلقائي للخيار: الحرف حسب ترتيب الخيار داخل السؤال الحالي.
                 var letters = ContainsArabic(text) || format.StartsWith("arabic", StringComparison.OrdinalIgnoreCase) ? ArabicLetters : LatinLetters;
                 var label = state.OptionIndex < letters.Length ? letters[state.OptionIndex] : (state.OptionIndex + 1).ToString();
                 state.OptionIndex++;
-                lines.Add(new SourceLine($"{label}) {text}", location, marks));
+                lines.Add(Line($"{label}) {text}"));
                 return;
             }
         }
 
         if (LiteralQuestion().IsMatch(TextDecoding.NormalizeDigits(text)))
             state.OptionIndex = 0;
-        lines.Add(new SourceLine(text, location, marks));
+        lines.Add(Line(text));
+    }
+
+    /// <summary>
+    /// صور الفقرة بترتيب ظهورها: DrawingML (a:blip) وVML القديم (v:imagedata).
+    /// نسخة Fallback داخل AlternateContent تكرار للصورة نفسها لبرامج أقدم، فتُتجاهل.
+    /// </summary>
+    private static (List<ExtractedImage> Images, List<string> Notes) ImagesOf(Paragraph p, MainDocumentPart main)
+    {
+        var images = new List<ExtractedImage>();
+        var notes = new List<string>();
+        foreach (var e in p.Descendants())
+        {
+            string? embed = null, link = null;
+            switch (e)
+            {
+                case DocumentFormat.OpenXml.Drawing.Blip blip:
+                    embed = blip.Embed?.Value;
+                    link = blip.Link?.Value;
+                    break;
+                case DocumentFormat.OpenXml.Vml.ImageData vml:
+                    embed = vml.RelationshipId?.Value;
+                    break;
+                default:
+                    continue;
+            }
+            if (e.Ancestors<AlternateContentFallback>().Any())
+                continue;
+            if (string.IsNullOrWhiteSpace(embed))
+            {
+                if (link is not null)
+                    notes.Add("صورة مرتبطة بملف خارجي وليست داخل المستند");
+                continue;
+            }
+            if (main.TryGetPartById(embed!, out var part) && part is ImagePart imagePart)
+            {
+                using var stream = imagePart.GetStream(FileMode.Open, FileAccess.Read);
+                if (stream.CanSeek && stream.Length > ExtractedImage.MaxBytes)
+                {
+                    notes.Add("صورة أكبر من 5 ميغابايت لم تُحفظ");
+                    continue;
+                }
+                using var ms = new MemoryStream();
+                stream.CopyTo(ms);
+                if (ms.Length > ExtractedImage.MaxBytes)
+                {
+                    notes.Add("صورة أكبر من 5 ميغابايت لم تُحفظ");
+                    continue;
+                }
+                images.Add(new ExtractedImage(ms.ToArray(), imagePart.ContentType.ToLowerInvariant()));
+            }
+            else
+            {
+                notes.Add("صورة لم تُقرأ من المستند");
+            }
+        }
+        return (images, notes);
     }
 
     /// <summary>

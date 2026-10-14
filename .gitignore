@@ -13,3 +13,6 @@ App_Data/
 *.db-wal
 TestResults/
 __pycache__/
+
+/output/
+/sample-source/

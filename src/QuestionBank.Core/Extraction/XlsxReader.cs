@@ -10,13 +10,14 @@ namespace QuestionBank.Core.Extraction;
 /// يبحث عن صف العناوين في أول 10 صفوف من كل ورقة، ويتعرف على: نص السؤال، والخيارات، والإجابة، والرمز.
 /// الإجابة تُقبل حرفًا (ب، b) أو رقمًا (2) أو نص الخيار نفسه.
 /// الورقة التي لا تُعرف أعمدتها تُذكر في التحذيرات (تحتاج مطابقة يدوية في الواجهة لاحقًا).
+/// الصور العائمة فوق الخلايا تُنسب إلى الصف الذي تبدأ فيه: عمود الخيار يعني ذلك الخيار، وأي عمود آخر يعني نص السؤال.
 /// </summary>
 public sealed class XlsxReader(IReadOnlyList<ColumnTemplateMap>? templates = null) : IQuestionReader
 {
     public const string NeedsMappingMarker = "تحتاج مطابقة يدوية";
 
     public string Name => "xlsx";
-    public string Version => "1.0";
+    public string Version => "1.1";
     public bool CanRead(string extension) => extension == "xlsx";
 
     /// <summary>مفتاح صف العناوين: العناوين المطبَّعة بترتيب الأعمدة. يُستخدم لمطابقة القوالب المحفوظة.</summary>
@@ -96,13 +97,20 @@ public sealed class XlsxReader(IReadOnlyList<ColumnTemplateMap>? templates = nul
                     continue;
                 }
 
+                var images = SheetImages(part);
+                var used = new HashSet<int>();
                 foreach (var (rowNo, cells) in rows.Where(r => r.RowNo > map.HeaderRow))
                 {
                     var stem = Cell(cells, map.Stem);
-                    if (string.IsNullOrWhiteSpace(stem))
+                    var rowImages = images.GetValueOrDefault(rowNo);
+                    if (string.IsNullOrWhiteSpace(stem) && rowImages?.Any(i => i.Col == map.Stem) != true)
                         continue;
-                    questions.Add(BuildQuestion(questions.Count + 1, sheetName, rowNo, cells, map, stem));
+                    used.Add(rowNo);
+                    questions.Add(BuildQuestion(questions.Count + 1, sheetName, rowNo, cells, map, stem, rowImages));
                 }
+                var stray = images.Keys.Count(r => r > map.HeaderRow && !used.Contains(r));
+                if (stray > 0)
+                    warnings.Add($"ورقة «{sheetName}»: {stray} صف فيه صورة بلا سؤال، لم تُنسب صوره لأي سؤال.");
             }
             return new ReaderResult(Name, Version, questions, warnings);
         }
@@ -110,12 +118,16 @@ public sealed class XlsxReader(IReadOnlyList<ColumnTemplateMap>? templates = nul
 
     private sealed record ColumnMap(int HeaderRow, int Stem, IReadOnlyList<int> Options, int? Answer, int? Code);
 
-    private static ExtractedQuestion BuildQuestion(int order, string sheet, int rowNo, Dictionary<int, string> cells, ColumnMap map, string stem)
+    private sealed record CellImage(int Col, ExtractedImage? Image, string? Note);
+
+    private static ExtractedQuestion BuildQuestion(int order, string sheet, int rowNo, Dictionary<int, string> cells, ColumnMap map, string stem,
+        List<CellImage>? rowImages)
     {
         var issues = new List<string>();
-        // نحتفظ بموقع كل خيار غير فارغ لنفهم الإجابة إذا أُعطيت كحرف أو رقم عمود.
-        var options = map.Options.Select((col, pos) => (Pos: pos, Text: Cell(cells, col).Trim()))
-            .Where(o => o.Text.Length > 0).ToList();
+        rowImages ??= [];
+        // نحتفظ بموقع كل خيار غير فارغ (أو صورته محتواه) لنفهم الإجابة إذا أُعطيت كحرف أو رقم عمود.
+        var options = map.Options.Select((col, pos) => (Pos: pos, Col: col, Text: Cell(cells, col).Trim()))
+            .Where(o => o.Text.Length > 0 || rowImages.Any(i => i.Col == o.Col && i.Image is not null)).ToList();
         int? correct = null;
         var detector = AnswerDetectors.None;
         var confidence = ExtractionConfidence.High;
@@ -150,7 +162,28 @@ public sealed class XlsxReader(IReadOnlyList<ColumnTemplateMap>? templates = nul
             confidence = ExtractionConfidence.Low;
         }
         var texts = options.Select(o => o.Text).ToList();
-        if (texts.Count != texts.Distinct().Count())
+        var images = new List<ExtractedImage>();
+        foreach (var ci in rowImages)
+        {
+            if (ci.Note is not null)
+            {
+                issues.Add(ci.Note);
+                confidence = ExtractionConfidence.Low;
+                continue;
+            }
+            var optionIndex = options.FindIndex(o => o.Col == ci.Col);
+            images.Add(ci.Image! with { OptionIndex = optionIndex >= 0 ? optionIndex : null });
+        }
+        if (images.Count > 0)
+        {
+            issues.Add($"سؤال مصوّر ({images.Count} صورة): تحقق من موضع الصور");
+            if (images.Any(m => !ExtractedImage.IsDisplayable(m.ContentType)))
+                issues.Add("صورة بصيغة لا يعرضها المتصفح ولا Moodle (مثل EMF أو WMF): تحتاج تحويلًا");
+            if (confidence == ExtractionConfidence.High) confidence = ExtractionConfidence.Medium;
+        }
+        var identities = options.Select((o, i) => o.Text + "|" + string.Join(",", images.Where(m => m.OptionIndex == i)
+            .Select(m => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(m.Content))))).ToList();
+        if (identities.Count != identities.Distinct().Count())
         {
             issues.Add("خيارات مكررة");
             if (confidence == ExtractionConfidence.High) confidence = ExtractionConfidence.Medium;
@@ -158,7 +191,55 @@ public sealed class XlsxReader(IReadOnlyList<ColumnTemplateMap>? templates = nul
 
         var code = map.Code is { } cc ? Cell(cells, cc).Trim() : null;
         return new ExtractedQuestion(order, string.IsNullOrEmpty(code) ? null : code, stem.Trim(), texts, correct,
-            detector, confidence, $"ورقة {sheet} · صف {rowNo}", issues);
+            detector, confidence, $"ورقة {sheet} · صف {rowNo}", issues, images.Count == 0 ? null : images);
+    }
+
+    /// <summary>
+    /// الصور العائمة في الورقة حسب صف بدايتها (مرقّم من 1 كما في Excel) وعمودها.
+    /// الصورة المرتبطة بملف خارجي أو الأكبر من الحد تُسجَّل ملاحظةً بدل الصورة.
+    /// </summary>
+    private static Dictionary<int, List<CellImage>> SheetImages(WorksheetPart part)
+    {
+        var result = new Dictionary<int, List<CellImage>>();
+        var drawings = part.DrawingsPart;
+        if (drawings?.WorksheetDrawing is null)
+            return result;
+        foreach (var anchor in drawings.WorksheetDrawing.ChildElements)
+        {
+            var from = anchor switch
+            {
+                DocumentFormat.OpenXml.Drawing.Spreadsheet.TwoCellAnchor t => t.FromMarker,
+                DocumentFormat.OpenXml.Drawing.Spreadsheet.OneCellAnchor o => o.FromMarker,
+                _ => null
+            };
+            if (from is null
+                || !int.TryParse(from.RowId?.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var row)
+                || !int.TryParse(from.ColumnId?.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var col))
+                continue;
+            foreach (var blip in anchor.Descendants<DocumentFormat.OpenXml.Drawing.Blip>())
+            {
+                CellImage item;
+                var embed = blip.Embed?.Value;
+                if (string.IsNullOrWhiteSpace(embed))
+                    item = new CellImage(col, null, "صورة مرتبطة بملف خارجي وليست داخل الملف");
+                else if (drawings.TryGetPartById(embed, out var p) && p is ImagePart image)
+                {
+                    using var stream = image.GetStream(FileMode.Open, FileAccess.Read);
+                    using var ms = new MemoryStream();
+                    stream.CopyTo(ms);
+                    item = ms.Length > ExtractedImage.MaxBytes
+                        ? new CellImage(col, null, "صورة أكبر من 5 ميغابايت لم تُحفظ")
+                        : new CellImage(col, new ExtractedImage(ms.ToArray(), image.ContentType.ToLowerInvariant()), null);
+                }
+                else
+                    item = new CellImage(col, null, "صورة لم تُقرأ من الملف");
+                // صفوف Excel في الرسم تبدأ من 0، وفي الخلايا من 1.
+                (result.TryGetValue(row + 1, out var list) ? list : result[row + 1] = []).Add(item);
+            }
+        }
+        foreach (var list in result.Values)
+            list.Sort((a, b) => a.Col.CompareTo(b.Col));
+        return result;
     }
 
     private ColumnMap? FindHeader(List<(int RowNo, Dictionary<int, string> Cells)> rows)

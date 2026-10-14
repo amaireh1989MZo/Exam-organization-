@@ -358,7 +358,7 @@ async function showQuestions(u) {
     q.options.forEach((o, i) => ol.append(el('li', { className: i === q.correctIndex ? 'correct' : '' }, o, qImages(q, i))));
     const dot = el('span', { className: 'dot ' + q.confidence, title: CONF_AR[q.confidence] });
     body.append(el('div', { className: 'q' },
-      el('div', { className: 'qh' }, el('span', { className: 'qt', textContent: `${fmt(q.order)}. ${q.text}` }), dot),
+      el('div', { className: 'qh' }, el('span', { className: 'qt', textContent: `${fmt(q.order)}. ${qTitle(q)}` }), dot),
       qImages(q, null),
       ol,
       q.issues.length ? el('div', { className: 'issues', textContent: q.issues.join(' · ') }) : '',
@@ -603,7 +603,7 @@ function renderReview() {
   list.replaceChildren(...rv.items.map((q, i) => {
     const row = el('button', { className: 'qrow', type: 'button', role: 'option' },
       el('span', { className: 'dot ' + DOT[q.confidence] }),
-      el('span', {}, el('span', { className: 't', textContent: q.text }), el('span', { className: 'm', textContent: q.source })));
+      el('span', {}, el('span', { className: 't', textContent: qTitle(q) }), el('span', { className: 'm', textContent: q.source })));
     row.setAttribute('aria-selected', String(i === rv.index));
     row.onclick = () => { rv.index = i; renderReview(); };
     return row;
@@ -642,6 +642,9 @@ $('#rv-assign-form').addEventListener('submit', async e => {
   } catch (err) { toast(err.message); }
 });
 
+/* عنوان السؤال في القوائم: السؤال الذي نصه صورة فقط له وصف بدل سطر فارغ. */
+const qTitle = q => q.text || ((q.images || []).length ? '(سؤال نصه صورة)' : '(بلا نص)');
+
 /* صور السؤال: slot = null لنص السؤال، أو رقم الخيار. الصيغ التي لا يعرضها المتصفح تظهر كتنبيه. */
 function qImages(q, slot) {
   const list = (q.images || []).filter(m => m.optionIndex === slot);
@@ -664,7 +667,7 @@ function renderDetail(q) {
   box.append(el('div', { className: 'qstatus' },
     el('span', { className: 'mono muted', textContent: q.code || ('#' + q.id) }),
     el('span', { className: 'chip ' + (q.reviewStatus === 'Approved' ? 'ok' : q.reviewStatus === 'Flagged' ? 'warn' : 'wait'), textContent: RV_STATUS_AR[q.reviewStatus] || q.reviewStatus })));
-  box.append(el('h2', { textContent: q.text, style: 'white-space:pre-wrap;font-size:18px' }));
+  box.append(el('h2', { textContent: qTitle(q), style: 'white-space:pre-wrap;font-size:18px' }));
   box.append(qImages(q, null));
 
   const opts = el('div', { className: 'opts' });
@@ -805,7 +808,7 @@ function renderExport() {
     const add = el('button', { className: 'btn sm', type: 'button', textContent: 'أضف' });
     add.onclick = () => addToBasket(q.id);
     const card = el('div', { className: 'excard', draggable: true },
-      el('span', {}, el('span', { className: 't', textContent: q.text }), el('br'), el('span', { className: 'm', textContent: q.source })), add);
+      el('span', {}, el('span', { className: 't', textContent: qTitle(q) }), el('br'), el('span', { className: 'm', textContent: q.source })), add);
     card.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-qb-question', String(q.id)); e.dataTransfer.effectAllowed = 'copy'; });
     return card;
   }));
@@ -817,7 +820,7 @@ function renderExport() {
     const rm = el('button', { className: 'btn sm', type: 'button', textContent: '×' });
     rm.setAttribute('aria-label', 'إزالة من السلة');
     rm.onclick = () => { basket = basket.filter(x => x !== id); saveBasket(); renderExport(); };
-    return el('div', { className: 'bitem' }, el('span', { textContent: q ? q.text : '#' + id }), rm);
+    return el('div', { className: 'bitem' }, el('span', { textContent: q ? qTitle(q) : '#' + id }), rm);
   }));
   if (!basket.length) box.append(el('div', { className: 'empty', textContent: 'أفلت الأسئلة هنا' }));
 }
@@ -943,7 +946,7 @@ async function loadClassify() {
   const qbox = $('#cl-questions');
   qbox.replaceChildren(...items.map(q => {
     const card = el('div', { className: 'qcard' + (selectedQuestion === q.id ? ' sel' : ''), draggable: true },
-      el('span', { className: 't', textContent: q.text }), el('span', { className: 'm' }, el('bdi', { textContent: q.source })));
+      el('span', { className: 't', textContent: qTitle(q) }), el('span', { className: 'm' }, el('bdi', { textContent: q.source })));
     const sugg = el('div', { className: 'sugg' }, el('span', { className: 'm', textContent: q.suggestions.length ? 'اقتراح نصي:' : 'لا اقتراح' }));
     q.suggestions.forEach(s => {
       const b = el('button', { className: 'sbtn', type: 'button', title: `${s.name}\n${s.rationale}` },

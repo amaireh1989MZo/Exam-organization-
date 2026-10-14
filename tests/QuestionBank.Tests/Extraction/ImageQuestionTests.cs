@@ -14,6 +14,8 @@ using M = DocumentFormat.OpenXml.Math;
 using MsOptions = Microsoft.Extensions.Options.Options;
 using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 using V = DocumentFormat.OpenXml.Vml;
+using X = DocumentFormat.OpenXml.Spreadsheet;
+using XDR = DocumentFormat.OpenXml.Drawing.Spreadsheet;
 
 namespace QuestionBank.Tests.Extraction;
 
@@ -246,6 +248,76 @@ public sealed class ImageQuestionTests : IDisposable
         Assert.Contains(result.Rejected, r => r.Reason.Contains("Moodle XML"));
         var gift = File.ReadAllText(Path.Combine(_kit.OutputRoot, "exports", result.FileName!), Encoding.UTF8);
         Assert.DoesNotContain("الشكل", gift);
+    }
+
+    // ---------- Excel ----------
+
+    /// <summary>ورقة بعناوين معروفة وصور عائمة: (صف، عمود) يبدأ من 0 كما في ملف الرسم.</summary>
+    private static byte[] PictureXlsx(string?[][] rows, params (int Row, int Col, byte[] Bytes)[] pictures)
+    {
+        var ms = new MemoryStream();
+        using (var doc = SpreadsheetDocument.Create(ms, SpreadsheetDocumentType.Workbook))
+        {
+            var wb = doc.AddWorkbookPart();
+            wb.Workbook = new X.Workbook(new X.Sheets());
+            var part = wb.AddNewPart<WorksheetPart>();
+            var data = new X.SheetData();
+            for (var r = 0; r < rows.Length; r++)
+            {
+                var row = new X.Row { RowIndex = (uint)(r + 1) };
+                for (var c = 0; c < rows[r].Length; c++)
+                {
+                    if (rows[r][c] is { } v)
+                        row.Append(new X.Cell { CellReference = $"{(char)('A' + c)}{r + 1}", DataType = X.CellValues.InlineString, InlineString = new X.InlineString(new X.Text(v)) });
+                }
+                data.Append(row);
+            }
+            part.Worksheet = new X.Worksheet(data);
+            var drawings = part.AddNewPart<DrawingsPart>();
+            var wsDrawing = new XDR.WorksheetDrawing();
+            foreach (var (r, c, bytes) in pictures)
+            {
+                var image = drawings.AddImagePart("image/png");
+                image.FeedData(new MemoryStream(bytes));
+                wsDrawing.Append(new XDR.TwoCellAnchor(
+                    new XDR.FromMarker(new XDR.ColumnId(c.ToString()), new XDR.ColumnOffset("0"), new XDR.RowId(r.ToString()), new XDR.RowOffset("0")),
+                    new XDR.ToMarker(new XDR.ColumnId((c + 1).ToString()), new XDR.ColumnOffset("0"), new XDR.RowId((r + 1).ToString()), new XDR.RowOffset("0")),
+                    new XDR.Picture(new XDR.BlipFill(new A.Blip { Embed = drawings.GetIdOfPart(image) })),
+                    new XDR.ClientData()));
+            }
+            drawings.WorksheetDrawing = wsDrawing;
+            part.Worksheet.Append(new X.Drawing { Id = part.GetIdOfPart(drawings) });
+            wb.Workbook.Sheets!.Append(new X.Sheet { Name = "بنك", SheetId = 1, Id = wb.GetIdOfPart(part) });
+        }
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public void Xlsx_FloatingImages_FollowTheirRowAndColumn()
+    {
+        var bytes = PictureXlsx(
+        [
+            ["السؤال", "أ", "ب", "ج", "الإجابة"],
+            ["ما الشكل؟", "مربع", null, "دائرة", "ب"],   // صورة الخيار ب هي محتواه، وصورة في عمود الإجابة تتبع النص
+            [null, "نعم", "لا", null, "أ"],              // نص السؤال صورة فقط
+            []                                          // صف فارغ فيه صورة: لا تُنسب لأي سؤال
+        ], (1, 2, Png2), (1, 4, Png1), (2, 0, Png1), (3, 1, Png2));
+
+        var result = new XlsxReader().Read(bytes);
+        Assert.Equal(2, result.Questions.Count);
+
+        var q1 = result.Questions[0];
+        Assert.Equal(["مربع", "", "دائرة"], q1.Options);
+        Assert.Equal(1, q1.CorrectIndex);
+        Assert.Equal([(1, Png2), (null, Png1)], q1.Images!.Select(m => (m.OptionIndex, m.Content)).ToList(), new ImageComparer());
+        Assert.Equal(ExtractionConfidence.Medium, q1.Confidence);
+
+        var q2 = result.Questions[1];
+        Assert.Equal("", q2.Text);
+        Assert.Null(Assert.Single(q2.Images!).OptionIndex);
+        Assert.Equal(0, q2.CorrectIndex);
+
+        Assert.Contains(result.Warnings, w => w.Contains("صف فيه صورة بلا سؤال"));
     }
 
     private sealed class ImageComparer : IEqualityComparer<(int?, byte[])>
